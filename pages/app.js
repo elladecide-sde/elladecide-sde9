@@ -1,8 +1,7 @@
-// app.js — LOLA catálogo: parseo de Excel en el navegador + subida al backend.
+// app.js — LOLA catálogo: login JWT + parseo de Excel en el navegador + subida.
 // La lógica de parseo y precios es un port 1:1 de la extensión (content.js
-// `generateFromSync`) y del generador Python (DOBLECLIC PARA GENERAR CATALOGO.py).
+// `generateFromSync`) y del generador Python.
 
-// TODO: hacer configurable (por ahora apunta al Worker desplegado).
 const API_BASE = 'https://lola-backend.elladecide.workers.dev';
 
 // CONFIG — idéntico a CONFIG_DEFAULTS de la extensión.
@@ -14,7 +13,27 @@ const CONFIG = {
   ofertaKeywords: ['oferta', 'liq'],
 };
 
-// ── Lógica de precios (port de esOferta + calcularPrecios) ────────────────
+// ── Autenticación (JWT) ─────────────────────────────────────────────────────
+const TOKEN_KEY = 'lola_token';
+const getToken = () => localStorage.getItem(TOKEN_KEY) || '';
+const setToken = (t) => localStorage.setItem(TOKEN_KEY, t);
+const clearToken = () => localStorage.removeItem(TOKEN_KEY);
+
+async function login(username, password) {
+  const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { msg = (await res.json()).error || msg; } catch (e) { /* ignore */ }
+    throw new Error(msg);
+  }
+  return (await res.json()).token;
+}
+
+// ── Lógica de precios (port de esOferta + calcularPrecios) ──────────────────
 function esOferta(nombre) {
   const n = String(nombre).trim();
   if (n.endsWith('.')) return true;
@@ -22,8 +41,6 @@ function esOferta(nombre) {
   return CONFIG.ofertaKeywords.some((kw) => low.endsWith(kw));
 }
 
-// Excel trae el precio de Lista 4 → se hace ingeniería inversa al costo y se
-// recalculan las 4 listas. Oferta: las 4 listas = precio del Excel.
 function calcularPrecios(precioLista4) {
   const IVA = 1 + CONFIG.iva / 100;
   const IVA_INVERSA = 1 + CONFIG.inversaIva / 100;
@@ -32,10 +49,8 @@ function calcularPrecios(precioLista4) {
   return CONFIG.listas.map((f) => Math.round(costo * IVA * f));
 }
 
-// ── codigo_unico: abreviación del nombre + código de artículo (modelo) ────
+// ── codigo_unico: abreviación del nombre + código de artículo (modelo) ──────
 // TODO (regla pendiente de confirmar): "BELEN CONJUNTO ARMADO 1420" → "BELCONARM1420".
-// Se abrevia cada palabra ANTES del modelo (3 letras) y se le pega el modelo.
-// Sin modelo (ej. "LIQ." sin número): se abrevian las primeras palabras.
 function generarCodigoUnico(nombre) {
   const tokens = String(nombre)
     .toUpperCase()
@@ -57,11 +72,11 @@ function generarCodigoUnico(nombre) {
   return abreviacion + modelo;
 }
 
-// ── Parseo del Excel (port de generateFromSync) ───────────────────────────
+// ── Parseo del Excel (port de generateFromSync) ─────────────────────────────
 function parseExcel(rows, colNombre, colPrecio, colCodigo, skipRows) {
   const productos = [];
-  const vistos = new Set(); // dedup por nombre en mayúsculas
-  const usados = new Set();  // garantiza unicidad de codigo_unico
+  const vistos = new Set();
+  const usados = new Set();
 
   for (let i = skipRows; i < rows.length; i++) {
     const row = rows[i];
@@ -74,7 +89,6 @@ function parseExcel(rows, colNombre, colPrecio, colCodigo, skipRows) {
     const precio = parseFloat(row[colPrecio]);
     if (!precio || precio <= 0) continue;
 
-    // Código: si hay columna de código, usarla; si no, generar codigo_unico.
     let codigoUnico = '';
     if (colCodigo >= 0) {
       const raw = String(row[colCodigo] ?? '').trim();
@@ -84,7 +98,6 @@ function parseExcel(rows, colNombre, colPrecio, colCodigo, skipRows) {
     }
     if (!codigoUnico) codigoUnico = generarCodigoUnico(nombre);
 
-    // Garantizar unicidad (colisión → sufijo).
     let unico = codigoUnico;
     let n = 1;
     while (usados.has(unico)) unico = `${codigoUnico}-${n++}`;
@@ -103,25 +116,28 @@ function parseExcel(rows, colNombre, colPrecio, colCodigo, skipRows) {
   return productos;
 }
 
-// ── Subida al backend (POST /api/v1/admin/products) ───────────────────────
-async function subirCatalogo(productos, secret) {
+// ── Subida al backend (POST /api/v1/admin/products con Bearer) ──────────────
+async function subirCatalogo(productos) {
+  const token = getToken();
+  if (!token) throw new Error('Sesión expirada. Volvé a ingresar.');
   const res = await fetch(`${API_BASE}/api/v1/admin/products`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Admin-Secret': secret,
+      Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ products: productos }),
   });
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try { msg = (await res.json()).error || msg; } catch (e) { /* ignore */ }
+    if (res.status === 401) { clearToken(); renderAuth(); }
     throw new Error(msg);
   }
   return res.json(); // { revision, hash }
 }
 
-// ── UI ────────────────────────────────────────────────────────────────────
+// ── UI ──────────────────────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
 let productosGenerados = null;
 
@@ -131,8 +147,35 @@ function setStatus(msg, ok) {
   el.className = 'status ' + (ok ? 'ok' : 'err');
 }
 
-$('secret').value = localStorage.getItem('lola_secret') || '';
-$('secret').addEventListener('change', (e) => localStorage.setItem('lola_secret', e.target.value));
+function renderAuth() {
+  const logged = !!getToken();
+  $('loginBlock').hidden = logged;
+  $('sessionBlock').hidden = !logged;
+  $('uploadArea').hidden = !logged;
+  if (!logged) productosGenerados = null;
+}
+
+$('loginBtn').addEventListener('click', async () => {
+  const u = $('username').value.trim();
+  const p = $('password').value;
+  if (!u || !p) { setStatus('Ingresá usuario y contraseña', false); return; }
+  try {
+    setStatus('Ingresando…', true);
+    const token = await login(u, p);
+    setToken(token);
+    $('password').value = '';
+    renderAuth();
+    setStatus('', true);
+  } catch (e) {
+    setStatus('❌ ' + e.message, false);
+  }
+});
+
+$('logoutBtn').addEventListener('click', () => {
+  clearToken();
+  renderAuth();
+  setStatus('', true);
+});
 
 $('excel').addEventListener('change', (e) => {
   const f = e.target.files[0];
@@ -172,13 +215,10 @@ $('generar').addEventListener('click', async () => {
 
 $('subir').addEventListener('click', async () => {
   if (!productosGenerados || !productosGenerados.length) return;
-  const secret = $('secret').value.trim();
-  if (!secret) { setStatus('Ingresá el secret de administrador', false); return; }
-
   try {
     setStatus('Subiendo…', true);
-    const r = await subirCatalogo(productosGenerados, secret);
-    setStatus(`☁️ Catálogo subido — revisión ${r.revision} · hash ${r.hash.slice(0, 8)}…`, true);
+    const r = await subirCatalogo(productosGenerados);
+    setStatus(`☁️ Catálogo subido — revisión ${r.revision} · hash ${(r.hash || '').slice(0, 8)}…`, true);
   } catch (err) {
     setStatus('❌ ' + err.message, false);
   }
@@ -207,3 +247,6 @@ function renderPreview(productos) {
   }
   $('preview').hidden = false;
 }
+
+// Inicial
+renderAuth();

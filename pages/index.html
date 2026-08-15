@@ -13,47 +13,58 @@
       <p class="sub">Subí el Excel de precios (Lista 4) → se genera el catálogo con las 4 listas y se sube a la nube.</p>
     </header>
 
-    <!-- Secret de administrador -->
-    <section class="block">
+    <!-- Login -->
+    <section class="block auth" id="loginBlock">
       <label class="field">
-        <span>Secret de administrador</span>
-        <input type="password" id="secret" placeholder="ADMIN_SECRET" autocomplete="off">
+        <span>Usuario</span>
+        <input type="text" id="username" autocomplete="username" placeholder="tu usuario">
       </label>
-      <p class="hint">Es el mismo valor que configuraste en el Worker (<code>wrangler secret put ADMIN_SECRET</code>). Se guarda solo en tu navegador.</p>
-    </section>
-
-    <!-- Archivo Excel -->
-    <section class="block">
-      <label class="file">
-        <input type="file" id="excel" accept=".xlsx,.xls,.xlsm">
-        <span>📂 Elegir archivo Excel (.xlsx)</span>
+      <label class="field">
+        <span>Contraseña</span>
+        <input type="password" id="password" autocomplete="current-password" placeholder="tu contraseña">
       </label>
-      <div id="fileInfo" class="muted">Ningún archivo seleccionado</div>
+      <button id="loginBtn" class="primary">🔐 Ingresar</button>
     </section>
 
-    <!-- Columnas -->
-    <section class="block cols">
-      <label class="field">Col Nombre <input type="number" id="colNombre" value="1" min="0"></label>
-      <label class="field">Col Precio <input type="number" id="colPrecio" value="2" min="0"></label>
-      <label class="field">Col Código <input type="number" id="colCodigo" value="-1" min="-1"> <span class="hint">(-1 = auto)</span></label>
-      <label class="field">Filas header <input type="number" id="skipRows" value="0" min="0"></label>
+    <!-- Sesión activa -->
+    <section class="block auth" id="sessionBlock" hidden>
+      <div class="session">
+        <span class="ok">✅ Sesión activa</span>
+        <button id="logoutBtn" class="secondary">Salir</button>
+      </div>
     </section>
 
-    <p class="hint">Columnas en base 0 (A = 0, B = 1…). El Excel viene con la <strong>Lista de precio 4</strong>; el resto de listas se calcula solo.</p>
+    <!-- Subida (solo visible con sesión activa) -->
+    <div id="uploadArea" hidden>
+      <section class="block">
+        <label class="file">
+          <input type="file" id="excel" accept=".xlsx,.xls,.xlsm">
+          <span>📂 Elegir archivo Excel (.xlsx)</span>
+        </label>
+        <div id="fileInfo" class="muted">Ningún archivo seleccionado</div>
+      </section>
 
-    <!-- Acciones -->
-    <div class="actions">
-      <button id="generar" class="primary">⚡ Generar catálogo</button>
-      <button id="subir" class="secondary" disabled>☁️ Subir a la nube</button>
+      <section class="block cols">
+        <label class="field">Col Nombre <input type="number" id="colNombre" value="1" min="0"></label>
+        <label class="field">Col Precio <input type="number" id="colPrecio" value="2" min="0"></label>
+        <label class="field">Col Código <input type="number" id="colCodigo" value="-1" min="-1"> <span class="hint">(-1 = auto)</span></label>
+        <label class="field">Filas header <input type="number" id="skipRows" value="0" min="0"></label>
+      </section>
+
+      <p class="hint">Columnas en base 0 (A = 0, B = 1…). El Excel viene con la <strong>Lista de precio 4</strong>; el resto de listas se calcula solo.</p>
+
+      <div class="actions">
+        <button id="generar" class="primary">⚡ Generar catálogo</button>
+        <button id="subir" class="secondary" disabled>☁️ Subir a la nube</button>
+      </div>
+
+      <div id="status" class="status" role="status"></div>
+
+      <section id="preview" hidden>
+        <h2>Vista previa</h2>
+        <div id="previewBody" class="preview"></div>
+      </section>
     </div>
-
-    <div id="status" class="status" role="status"></div>
-
-    <!-- Vista previa -->
-    <section id="preview" hidden>
-      <h2>Vista previa</h2>
-      <div id="previewBody" class="preview"></div>
-    </section>
   </main>
 
   <script src="xlsx.full.min.js"></script>

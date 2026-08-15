@@ -5,29 +5,37 @@
 //   GET  /api/v1/version                 → { revision, hash }
 //   GET  /api/v1/sync?last_revision=N    → { revision, hash, products, deleted }
 //
-// Endpoints admin (protegidos con header X-Admin-Secret):
+// Autenticación (JWT):
+//   POST /api/v1/auth/login { username, password } → { token, expires_in }
+//   Los endpoints admin exigen `Authorization: Bearer <token>`.
+//
+// Endpoints admin:
 //   POST   /api/v1/admin/products             → upsert de 1 o N productos + bump + hash
 //   DELETE /api/v1/admin/products/:codigo_unico→ borrado (tombstone) + bump + hash
 //   POST   /api/v1/admin/rehash               → recalcula el hash (tras tocar D1 a mano)
 //
-// El "bump de revisión" es el corazón del sync: sube revision_number +1, estampa
-// las filas tocadas con esa revisión y recalcula el hash del catálogo, todo en
-// UNA transacción (db.batch).
+// El "bump de revisión" sube revision_number +1, estampa las filas tocadas y
+// recalcula el hash del catálogo, todo en UNA transacción (db.batch).
 // ============================================================================
 
+import { bearerToken, safeEqual, signJwt, verifyJwt } from './auth';
 import { computeCatalogHash, type ProductRef } from './hash';
 
 export interface Env {
   DB: D1Database;
-  ADMIN_SECRET?: string; // `npx wrangler secret put ADMIN_SECRET` (o .dev.vars en local)
+  ADMIN_USER?: string;     // usuario de login (wrangler secret put ADMIN_USER)
+  ADMIN_PASSWORD?: string; // contraseña de login (wrangler secret put ADMIN_PASSWORD)
+  JWT_SECRET?: string;     // clave de firma del JWT (wrangler secret put JWT_SECRET)
 }
 
 interface Product extends ProductRef {}
 
+const TOKEN_TTL_SEC = 24 * 60 * 60; // 24 horas
+
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Admin-Secret',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
 const json = (data: unknown, status = 200) =>
@@ -59,6 +67,38 @@ async function recomputeHash(db: D1Database): Promise<string> {
   const hash = await computeCatalogHash(products);
   await db.prepare("UPDATE metadata SET catalog_hash = ? WHERE key = 'catalog'").bind(hash).run();
   return hash;
+}
+
+// ── Autenticación ────────────────────────────────────────────────────────────
+
+async function handleLogin(request: Request, env: Env): Promise<Response> {
+  const { ADMIN_USER, ADMIN_PASSWORD, JWT_SECRET } = env;
+  if (!ADMIN_USER || !ADMIN_PASSWORD || !JWT_SECRET) {
+    return err('Autenticación no configurada en el Worker', 503);
+  }
+  let body: { username?: unknown; password?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return err('Body inválido', 400);
+  }
+  const username = typeof body.username === 'string' ? body.username : '';
+  const password = typeof body.password === 'string' ? body.password : '';
+  if (!safeEqual(username, ADMIN_USER) || !safeEqual(password, ADMIN_PASSWORD)) {
+    return err('Credenciales inválidas', 401);
+  }
+  const token = await signJwt(JWT_SECRET, { sub: username }, TOKEN_TTL_SEC);
+  return json({ token, expires_in: TOKEN_TTL_SEC });
+}
+
+// FAIL CLOSED: sin JWT_SECRET configurado, NADIE puede administrar.
+async function requireAdmin(request: Request, env: Env): Promise<{ ok: boolean; reason?: string }> {
+  if (!env.JWT_SECRET) return { ok: false, reason: 'Autenticación no configurada (JWT_SECRET)' };
+  const token = bearerToken(request);
+  if (!token) return { ok: false, reason: 'Token requerido' };
+  const payload = await verifyJwt(env.JWT_SECRET, token);
+  if (!payload) return { ok: false, reason: 'Token inválido o expirado' };
+  return { ok: true };
 }
 
 // ── Admin: escritura + bump ──────────────────────────────────────────────────
@@ -142,8 +182,7 @@ async function adminDeleteProduct(db: D1Database, codigoUnico: string) {
 // ── Sync ─────────────────────────────────────────────────────────────────────
 
 async function handleSync(db: D1Database, url: URL) {
-  // last_revision inválido (NaN, negativo, texto) → 0 (envía todo). Evita
-  // bindear NaN a SQLite (comportamiento indefinido).
+  // last_revision inválido (NaN, negativo, texto) → 0 (envía todo).
   const raw = url.searchParams.get('last_revision') ?? '0';
   const parsed = Number.parseInt(raw, 10);
   const last = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
@@ -204,14 +243,6 @@ function normalizeProducts(body: unknown): Product[] {
   });
 }
 
-// FAIL CLOSED: sin ADMIN_SECRET configurado, NADIE puede administrar.
-// (Antes era fail-open: devolvía true sin secret → cualquiera borraba el catálogo.)
-function requireAdmin(request: Request, env: Env): { ok: boolean; reason?: string } {
-  if (!env.ADMIN_SECRET) return { ok: false, reason: 'Administración deshabilitada: configurá ADMIN_SECRET' };
-  if (request.headers.get('x-admin-secret') !== env.ADMIN_SECRET) return { ok: false, reason: 'No autorizado' };
-  return { ok: true };
-}
-
 // ── Router ───────────────────────────────────────────────────────────────────
 
 export default {
@@ -228,12 +259,14 @@ export default {
         res = json(await getMetadata(env.DB));
       } else if (method === 'GET' && path === '/api/v1/sync') {
         res = await handleSync(env.DB, url);
+      } else if (method === 'POST' && path === '/api/v1/auth/login') {
+        res = await handleLogin(request, env);
       } else if (method === 'POST' && path === '/api/v1/admin/products') {
-        const auth = requireAdmin(request, env);
+        const auth = await requireAdmin(request, env);
         if (!auth.ok) res = err(auth.reason ?? 'No autorizado', 401);
         else res = json(await adminUpsertProducts(env.DB, normalizeProducts(await request.json())));
       } else if (method === 'DELETE' && path.startsWith('/api/v1/admin/products/')) {
-        const auth = requireAdmin(request, env);
+        const auth = await requireAdmin(request, env);
         if (!auth.ok) res = err(auth.reason ?? 'No autorizado', 401);
         else {
           const codigoUnico = decodeURIComponent(path.split('/').pop() ?? '');
@@ -241,7 +274,7 @@ export default {
           else res = json(await adminDeleteProduct(env.DB, codigoUnico));
         }
       } else if (method === 'POST' && path === '/api/v1/admin/rehash') {
-        const auth = requireAdmin(request, env);
+        const auth = await requireAdmin(request, env);
         if (!auth.ok) res = err(auth.reason ?? 'No autorizado', 401);
         else res = json({ hash: await recomputeHash(env.DB) });
       } else {
