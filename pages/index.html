@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LOLA — Subir catálogo</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="card">
+    <header>
+      <h1>🐱 LOLA · Catálogo</h1>
+      <p class="sub">Subí el Excel de precios (Lista 4) → se genera el catálogo con las 4 listas y se sube a la nube.</p>
+    </header>
+
+    <!-- Secret de administrador -->
+    <section class="block">
+      <label class="field">
+        <span>Secret de administrador</span>
+        <input type="password" id="secret" placeholder="ADMIN_SECRET" autocomplete="off">
+      </label>
+      <p class="hint">Es el mismo valor que configuraste en el Worker (<code>wrangler secret put ADMIN_SECRET</code>). Se guarda solo en tu navegador.</p>
+    </section>
+
+    <!-- Archivo Excel -->
+    <section class="block">
+      <label class="file">
+        <input type="file" id="excel" accept=".xlsx,.xls,.xlsm">
+        <span>📂 Elegir archivo Excel (.xlsx)</span>
+      </label>
+      <div id="fileInfo" class="muted">Ningún archivo seleccionado</div>
+    </section>
+
+    <!-- Columnas -->
+    <section class="block cols">
+      <label class="field">Col Nombre <input type="number" id="colNombre" value="1" min="0"></label>
+      <label class="field">Col Precio <input type="number" id="colPrecio" value="2" min="0"></label>
+      <label class="field">Col Código <input type="number" id="colCodigo" value="-1" min="-1"> <span class="hint">(-1 = auto)</span></label>
+      <label class="field">Filas header <input type="number" id="skipRows" value="0" min="0"></label>
+    </section>
+
+    <p class="hint">Columnas en base 0 (A = 0, B = 1…). El Excel viene con la <strong>Lista de precio 4</strong>; el resto de listas se calcula solo.</p>
+
+    <!-- Acciones -->
+    <div class="actions">
+      <button id="generar" class="primary">⚡ Generar catálogo</button>
+      <button id="subir" class="secondary" disabled>☁️ Subir a la nube</button>
+    </div>
+
+    <div id="status" class="status" role="status"></div>
+
+    <!-- Vista previa -->
+    <section id="preview" hidden>
+      <h2>Vista previa</h2>
+      <div id="previewBody" class="preview"></div>
+    </section>
+  </main>
+
+  <script src="xlsx.full.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

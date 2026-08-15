@@ -8,7 +8,8 @@ Port nativo de la extensión LOLA (WhatsApp Web) a un **teclado Android (IME)** 
 
 ```
 ├── backend/     ← Cloudflare Worker (TypeScript) + D1 (SQLite)   ✅ fase 1
-└── android/     ← IME Kotlin + Compose + Room                    ✅ fases 2-4
+├── android/     ← IME Kotlin + Compose + Room                    ✅ fases 2-5
+└── pages/       ← interfaz web de subida de catálogo (Pages)     ✅
 ```
 
 ## Estado

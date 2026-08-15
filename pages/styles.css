@@ -1,0 +1,89 @@
+:root {
+  --bg: #1f2c34;
+  --surface: #2a3942;
+  --surface2: #3b4a54;
+  --accent: #00a884;
+  --green: #00d4a8;
+  --text: #e9edef;
+  --muted: #8696a0;
+  --red: #e74c3c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  display: flex;
+  justify-content: center;
+  padding: 32px 16px;
+}
+
+.card {
+  width: 100%;
+  max-width: 640px;
+}
+
+header h1 { margin: 0 0 4px; font-size: 26px; }
+.sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+
+.block { margin-bottom: 20px; }
+.field { display: block; margin-bottom: 10px; font-size: 13px; color: var(--text); }
+.field > span { display: block; margin-bottom: 4px; color: var(--muted); }
+
+input[type="password"], input[type="number"] {
+  width: 100%;
+  max-width: 200px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--surface2);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+input[type="password"] { max-width: 100%; }
+
+.cols { display: flex; gap: 16px; flex-wrap: wrap; }
+.cols .field { display: inline-flex; align-items: center; gap: 8px; }
+.cols input { width: 64px; }
+
+.file input { display: none; }
+.file span {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  padding: 10px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.muted { color: var(--muted); font-size: 12px; }
+.hint { color: var(--muted); font-size: 12px; line-height: 1.6; }
+code { background: var(--surface); padding: 1px 5px; border-radius: 4px; }
+
+.actions { display: flex; gap: 12px; margin: 20px 0 12px; }
+button {
+  border: none;
+  border-radius: 6px;
+  padding: 11px 18px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+.primary { background: var(--accent); color: #fff; }
+.secondary { background: var(--surface2); color: #fff; }
+
+.status { min-height: 20px; font-size: 13px; margin-bottom: 16px; }
+.status.ok { color: var(--green); }
+.status.err { color: var(--red); }
+
+#preview h2 { font-size: 16px; margin: 16px 0 8px; }
+.preview table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.preview th, .preview td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--surface2); }
+.preview th { color: var(--muted); font-weight: 600; }
+.preview td { color: var(--text); }
+.preview td:first-child { color: var(--green); font-family: monospace; }
