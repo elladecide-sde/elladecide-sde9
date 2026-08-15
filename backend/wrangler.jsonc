@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "lola-backend",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lola-db"
+      // Después de correr `npx wrangler d1 create lola-db`, copiá acá el UUID:
+      // "database_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+    }
+  ]
+}

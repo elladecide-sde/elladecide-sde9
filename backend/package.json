@@ -1,0 +1,17 @@
+{
+  "name": "lola-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "LOLA — Cloudflare Worker + D1 (sync offline-first del catálogo)",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:init": "wrangler d1 execute lola-db --remote --file ./schema.sql",
+    "db:init:local": "wrangler d1 execute lola-db --local --file ./schema.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
+    "wrangler": "^3.90.0"
+  }
+}

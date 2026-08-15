@@ -1,0 +1,16 @@
+# Node / Wrangler
+node_modules/
+.wrangler/
+.dev.vars
+
+# Android (fase 2)
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.iml
+
+# Sistema
+.DS_Store
+Thumbs.db

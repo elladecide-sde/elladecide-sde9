@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        LOLA — teclado IME. NO declara Activity launcher: se habilita desde
+        Ajustes → Sistema → Idiomas e introducción → Teclado virtual.
+        Permisos mínimos: ninguno sensible (sin SMS/contactos/accesibilidad).
+    -->
+
+    <application
+        android:label="@string/app_name"
+        android:allowBackup="false">
+
+        <service
+            android:name=".LolaImeService"
+            android:label="@string/ime_name"
+            android:permission="android.permission.BIND_INPUT_METHOD"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/method" />
+        </service>
+
+        <!-- FileProvider: expone el PNG generado para commitContent() -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- Selector de carpeta de imágenes (SAF) lanzado desde el teclado -->
+        <activity
+            android:name=".FolderPickerActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+    </application>
+
+</manifest>
