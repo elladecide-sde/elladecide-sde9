@@ -117,7 +117,7 @@ object Precio {
         }
 
         if (conLista.isEmpty()) {
-            return todasBlocks.joinToString("\n") + "\n" + SEP + "\n\n_$FOOTER_TEXT_"
+            return todasBlocks.joinToString("\n") + "\n" + SEP + "\n\n_${FOOTER_TEXT}_"
         }
 
         val (totalTarjeta, totalEfectivo) = totales(cart, descuento)
@@ -129,7 +129,7 @@ object Precio {
         sb.append("*>>  TOTAL  << | ${Mensaje.fmt(totalTarjeta)} P. LISTA |*\n")
         sb.append("*>>  TOTAL  << | ${Mensaje.fmt(totalEfectivo)} EFEC/TRAN*\n")
         sb.append(SEP)
-        sb.append("\n\n_$FOOTER_TEXT_")
+        sb.append("\n\n_${FOOTER_TEXT}_")
         if (todasBlocks.isNotEmpty()) {
             sb.append("\n\n").append(todasBlocks.joinToString("\n")).append('\n').append(SEP)
         }
