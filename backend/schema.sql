@@ -58,6 +58,17 @@ CREATE TABLE IF NOT EXISTS tombstones (
 );
 CREATE INDEX IF NOT EXISTS idx_tombstones_revision ON tombstones(deleted_at_revision);
 
+-- ── auth: credenciales de administración ────────────────────────────────────
+--   La contraseña se guarda HASEADA (PBKDF2-HMAC-SHA256 + salt), nunca en plano.
+--   Si esta fila NO existe, el login cae al secret ADMIN_PASSWORD (bootstrap);
+--   al cambiar la contraseña se crea/actualiza esta fila y D1 pasa a mandar.
+CREATE TABLE IF NOT EXISTS auth (
+  key           TEXT PRIMARY KEY,          -- siempre 'admin'
+  password_hash TEXT NOT NULL,             -- hex
+  salt          TEXT NOT NULL,             -- hex
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ── Seed del singleton de metadata ──────────────────────────────────────────
 INSERT INTO metadata (key, revision_number, catalog_hash)
 VALUES ('catalog', 0, '')

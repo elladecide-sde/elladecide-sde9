@@ -30,7 +30,17 @@
     <section class="block auth" id="sessionBlock" hidden>
       <div class="session">
         <span class="ok">✅ Sesión activa</span>
+        <button id="changePwdBtn" class="secondary">🔑 Cambiar contraseña</button>
         <button id="logoutBtn" class="secondary">Salir</button>
+      </div>
+      <div id="changePwdBlock" class="change-pwd" hidden>
+        <label class="field"><span>Contraseña actual</span><input type="password" id="currentPwd" autocomplete="current-password"></label>
+        <label class="field"><span>Nueva contraseña</span><input type="password" id="newPwd" autocomplete="new-password"></label>
+        <label class="field"><span>Repetir nueva contraseña</span><input type="password" id="newPwd2" autocomplete="new-password"></label>
+        <div class="actions">
+          <button id="savePwdBtn" class="primary">Guardar</button>
+        </div>
+        <span id="changePwdStatus" class="status"></span>
       </div>
     </section>
 

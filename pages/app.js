@@ -137,6 +137,23 @@ async function subirCatalogo(productos) {
   return res.json(); // { revision, hash }
 }
 
+// ── Cambio de contraseña ────────────────────────────────────────────────────
+async function changePassword(currentPassword, newPassword) {
+  const token = getToken();
+  if (!token) throw new Error('Sesión expirada. Volvé a ingresar.');
+  const res = await fetch(`${API_BASE}/api/v1/auth/change-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { msg = (await res.json()).error || msg; } catch (e) { /* ignore */ }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
 // ── UI ──────────────────────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
 let productosGenerados = null;
@@ -175,6 +192,35 @@ $('logoutBtn').addEventListener('click', () => {
   clearToken();
   renderAuth();
   setStatus('', true);
+});
+
+$('changePwdBtn').addEventListener('click', () => {
+  const b = $('changePwdBlock');
+  b.hidden = !b.hidden;
+  $('changePwdStatus').textContent = '';
+  $('changePwdStatus').className = 'status';
+});
+
+$('savePwdBtn').addEventListener('click', async () => {
+  const current = $('currentPwd').value;
+  const nueva = $('newPwd').value;
+  const nueva2 = $('newPwd2').value;
+  const st = $('changePwdStatus');
+  if (!current || !nueva) { st.textContent = 'Completá todos los campos'; st.className = 'status err'; return; }
+  if (nueva.length < 8) { st.textContent = 'La contraseña debe tener al menos 8 caracteres'; st.className = 'status err'; return; }
+  if (nueva !== nueva2) { st.textContent = 'Las contraseñas no coinciden'; st.className = 'status err'; return; }
+  try {
+    await changePassword(current, nueva);
+    st.textContent = '✅ Contraseña actualizada';
+    st.className = 'status ok';
+    $('currentPwd').value = '';
+    $('newPwd').value = '';
+    $('newPwd2').value = '';
+    $('changePwdBlock').hidden = true;
+  } catch (e) {
+    st.textContent = '❌ ' + e.message;
+    st.className = 'status err';
+  }
 });
 
 $('excel').addEventListener('change', (e) => {

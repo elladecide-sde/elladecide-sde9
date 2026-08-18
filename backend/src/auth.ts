@@ -91,3 +91,41 @@ export function bearerToken(request: Request): string | null {
   const m = auth.match(/^Bearer\s+(.+)$/i);
   return m ? m[1].trim() : null;
 }
+
+// ── Hashing de contraseñas (PBKDF2-HMAC-SHA256 + salt) ───────────────────────
+// La contraseña NUNCA se guarda en plano: se guarda el hash con un salt único.
+// PBKDF2 con 100k iteraciones vía Web Crypto (crypto.subtle.deriveBits).
+
+const toHex = (bytes: Uint8Array): string =>
+  [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+const fromHex = (hex: string): Uint8Array => {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return bytes;
+};
+
+export function generateSalt(): string {
+  return toHex(crypto.getRandomValues(new Uint8Array(16)));
+}
+
+export async function hashPassword(password: string, saltHex: string): Promise<string> {
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt: fromHex(saltHex), iterations: 100_000 },
+    keyMaterial,
+    256,
+  );
+  return toHex(new Uint8Array(bits));
+}
+
+export async function verifyPassword(password: string, saltHex: string, expectedHash: string): Promise<boolean> {
+  const actual = await hashPassword(password, saltHex);
+  return safeEqual(actual, expectedHash);
+}

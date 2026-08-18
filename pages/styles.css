@@ -82,8 +82,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .status.err { color: var(--red); }
 
 .auth { max-width: 340px; }
-.session { display: flex; align-items: center; gap: 12px; }
+.session { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .session .ok { color: var(--green); font-weight: 600; }
+.change-pwd { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--surface2); }
+.change-pwd .status { margin-bottom: 0; }
 
 #preview h2 { font-size: 16px; margin: 16px 0 8px; }
 .preview table { width: 100%; border-collapse: collapse; font-size: 12px; }

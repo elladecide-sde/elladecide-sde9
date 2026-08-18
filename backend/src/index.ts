@@ -18,7 +18,7 @@
 // recalcula el hash del catálogo, todo en UNA transacción (db.batch).
 // ============================================================================
 
-import { bearerToken, safeEqual, signJwt, verifyJwt } from './auth';
+import { bearerToken, generateSalt, hashPassword, safeEqual, signJwt, verifyJwt, verifyPassword } from './auth';
 import { computeCatalogHash, type ProductRef } from './hash';
 
 export interface Env {
@@ -73,7 +73,7 @@ async function recomputeHash(db: D1Database): Promise<string> {
 
 async function handleLogin(request: Request, env: Env): Promise<Response> {
   const { ADMIN_USER, ADMIN_PASSWORD, JWT_SECRET } = env;
-  if (!ADMIN_USER || !ADMIN_PASSWORD || !JWT_SECRET) {
+  if (!ADMIN_USER || !JWT_SECRET) {
     return err('Autenticación no configurada en el Worker', 503);
   }
   let body: { username?: unknown; password?: unknown };
@@ -84,11 +84,56 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
   }
   const username = typeof body.username === 'string' ? body.username : '';
   const password = typeof body.password === 'string' ? body.password : '';
-  if (!safeEqual(username, ADMIN_USER) || !safeEqual(password, ADMIN_PASSWORD)) {
+  if (!safeEqual(username, ADMIN_USER)) {
     return err('Credenciales inválidas', 401);
   }
+
+  // Contraseña: D1 (hasheada) si ya se cambió, si no el secret ADMIN_PASSWORD.
+  const ok = await checkPassword(env, password);
+  if (!ok) return err('Credenciales inválidas', 401);
+
   const token = await signJwt(JWT_SECRET, { sub: username }, TOKEN_TTL_SEC);
   return json({ token, expires_in: TOKEN_TTL_SEC });
+}
+
+// Devuelve true si `password` coincide con la credencial vigente.
+async function checkPassword(env: Env, password: string): Promise<boolean> {
+  const row = await env.DB
+    .prepare("SELECT password_hash, salt FROM auth WHERE key = 'admin'")
+    .first<{ password_hash: string; salt: string }>();
+  if (row) return verifyPassword(password, row.salt, row.password_hash);
+  return env.ADMIN_PASSWORD ? safeEqual(password, env.ADMIN_PASSWORD) : false;
+}
+
+async function handleChangePassword(request: Request, env: Env): Promise<Response> {
+  let body: { current_password?: unknown; new_password?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return err('Body inválido', 400);
+  }
+  const current = typeof body.current_password === 'string' ? body.current_password : '';
+  const nueva = typeof body.new_password === 'string' ? body.new_password : '';
+  if (nueva.length < 8) return err('La nueva contraseña debe tener al menos 8 caracteres', 400);
+
+  if (!(await checkPassword(env, current))) {
+    return err('Contraseña actual incorrecta', 401);
+  }
+
+  const salt = generateSalt();
+  const hash = await hashPassword(nueva, salt);
+  await env.DB
+    .prepare(
+      `INSERT INTO auth (key, password_hash, salt) VALUES ('admin', ?, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         password_hash = excluded.password_hash,
+         salt = excluded.salt,
+         updated_at = datetime('now')`,
+    )
+    .bind(hash, salt)
+    .run();
+
+  return json({ ok: true });
 }
 
 // FAIL CLOSED: sin JWT_SECRET configurado, NADIE puede administrar.
@@ -261,6 +306,10 @@ export default {
         res = await handleSync(env.DB, url);
       } else if (method === 'POST' && path === '/api/v1/auth/login') {
         res = await handleLogin(request, env);
+      } else if (method === 'POST' && path === '/api/v1/auth/change-password') {
+        const auth = await requireAdmin(request, env);
+        if (!auth.ok) res = err(auth.reason ?? 'No autorizado', 401);
+        else res = await handleChangePassword(request, env);
       } else if (method === 'POST' && path === '/api/v1/admin/products') {
         const auth = await requireAdmin(request, env);
         if (!auth.ok) res = err(auth.reason ?? 'No autorizado', 401);
