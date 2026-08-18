@@ -164,6 +164,12 @@ function setStatus(msg, ok) {
   el.className = 'status ' + (ok ? 'ok' : 'err');
 }
 
+function setLoginStatus(msg, ok) {
+  const el = $('loginStatus');
+  el.textContent = msg;
+  el.className = 'status ' + (ok ? 'ok' : 'err');
+}
+
 function renderAuth() {
   const logged = !!getToken();
   $('loginBlock').hidden = logged;
@@ -175,16 +181,16 @@ function renderAuth() {
 $('loginBtn').addEventListener('click', async () => {
   const u = $('username').value.trim();
   const p = $('password').value;
-  if (!u || !p) { setStatus('Ingresá usuario y contraseña', false); return; }
+  if (!u || !p) { setLoginStatus('Ingresá usuario y contraseña', false); return; }
   try {
-    setStatus('Ingresando…', true);
+    setLoginStatus('Ingresando…', true);
     const token = await login(u, p);
     setToken(token);
     $('password').value = '';
     renderAuth();
-    setStatus('', true);
+    setLoginStatus('', true);
   } catch (e) {
-    setStatus('❌ ' + e.message, false);
+    setLoginStatus('❌ ' + e.message, false);
   }
 });
 
@@ -223,12 +229,26 @@ $('savePwdBtn').addEventListener('click', async () => {
   }
 });
 
-$('excel').addEventListener('change', (e) => {
-  const f = e.target.files[0];
-  $('fileInfo').textContent = f ? `${f.name} (${(f.size / 1024).toFixed(0)} KB)` : 'Ningún archivo seleccionado';
+function setArchivo(f) {
+  $('fileInfo').textContent = f ? `📄 ${f.name} (${(f.size / 1024).toFixed(0)} KB)` : '';
+  $('dzTitle').textContent = f ? f.name : 'Arrastrá el Excel acá';
   productosGenerados = null;
   $('subir').disabled = true;
   $('preview').hidden = true;
+}
+
+$('excel').addEventListener('change', (e) => setArchivo(e.target.files[0]));
+
+// Drag & drop
+const dz = $('dropzone');
+['dragover', 'dragenter'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragging'); }));
+['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragging'); }));
+dz.addEventListener('drop', (e) => {
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) {
+    $('excel').files = e.dataTransfer.files;
+    setArchivo(f);
+  }
 });
 
 $('generar').addEventListener('click', async () => {

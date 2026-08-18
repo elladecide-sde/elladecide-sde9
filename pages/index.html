@@ -3,78 +3,89 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LOLA — Subir catálogo</title>
+  <title>LOLA — Catálogo</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <main class="card">
-    <header>
-      <h1>🐱 LOLA · Catálogo</h1>
-      <p class="sub">Subí el Excel de precios (Lista 4) → se genera el catálogo con las 4 listas y se sube a la nube.</p>
+    <header class="head">
+      <div class="logo">🐱</div>
+      <div>
+        <h1>LOLA · Catálogo</h1>
+        <p class="sub">Subí el Excel de precios (Lista 4) → 4 listas calculadas → nube.</p>
+      </div>
     </header>
 
     <!-- Login -->
-    <section class="block auth" id="loginBlock">
+    <section class="block" id="loginBlock">
+      <h2 class="block-title">Ingresá</h2>
       <label class="field">
         <span>Usuario</span>
         <input type="text" id="username" autocomplete="username" placeholder="tu usuario">
       </label>
       <label class="field">
         <span>Contraseña</span>
-        <input type="password" id="password" autocomplete="current-password" placeholder="tu contraseña">
+        <input type="password" id="password" autocomplete="current-password" placeholder="••••••••">
       </label>
-      <button id="loginBtn" class="primary">🔐 Ingresar</button>
+      <button id="loginBtn" class="btn primary full">🔐 Ingresar</button>
+      <span id="loginStatus" class="status"></span>
     </section>
 
     <!-- Sesión activa -->
-    <section class="block auth" id="sessionBlock" hidden>
+    <section class="block" id="sessionBlock" hidden>
       <div class="session">
-        <span class="ok">✅ Sesión activa</span>
-        <button id="changePwdBtn" class="secondary">🔑 Cambiar contraseña</button>
-        <button id="logoutBtn" class="secondary">Salir</button>
+        <span class="pill ok">✅ Sesión activa</span>
+        <button id="changePwdBtn" class="btn ghost">🔑 Contraseña</button>
+        <button id="logoutBtn" class="btn ghost">Salir</button>
       </div>
       <div id="changePwdBlock" class="change-pwd" hidden>
         <label class="field"><span>Contraseña actual</span><input type="password" id="currentPwd" autocomplete="current-password"></label>
-        <label class="field"><span>Nueva contraseña</span><input type="password" id="newPwd" autocomplete="new-password"></label>
-        <label class="field"><span>Repetir nueva contraseña</span><input type="password" id="newPwd2" autocomplete="new-password"></label>
-        <div class="actions">
-          <button id="savePwdBtn" class="primary">Guardar</button>
+        <div class="grid2">
+          <label class="field"><span>Nueva contraseña</span><input type="password" id="newPwd" autocomplete="new-password"></label>
+          <label class="field"><span>Repetir</span><input type="password" id="newPwd2" autocomplete="new-password"></label>
         </div>
+        <button id="savePwdBtn" class="btn primary">Guardar</button>
         <span id="changePwdStatus" class="status"></span>
       </div>
     </section>
 
-    <!-- Subida (solo visible con sesión activa) -->
+    <!-- Subida -->
     <div id="uploadArea" hidden>
       <section class="block">
-        <label class="file">
+        <label class="dropzone" id="dropzone">
           <input type="file" id="excel" accept=".xlsx,.xls,.xlsm">
-          <span>📂 Elegir archivo Excel (.xlsx)</span>
+          <span class="dz-icon">📂</span>
+          <span class="dz-title" id="dzTitle">Arrastrá el Excel acá</span>
+          <span class="dz-sub">o hacé click para elegir (.xlsx / .xls)</span>
         </label>
-        <div id="fileInfo" class="muted">Ningún archivo seleccionado</div>
+        <div id="fileInfo" class="muted"></div>
       </section>
 
-      <section class="block cols">
-        <label class="field">Col Nombre <input type="number" id="colNombre" value="1" min="0"></label>
-        <label class="field">Col Precio <input type="number" id="colPrecio" value="2" min="0"></label>
-        <label class="field">Col Código <input type="number" id="colCodigo" value="-1" min="-1"> <span class="hint">(-1 = auto)</span></label>
-        <label class="field">Filas header <input type="number" id="skipRows" value="0" min="0"></label>
+      <section class="block">
+        <h2 class="block-title">Columnas</h2>
+        <div class="cols">
+          <label class="field">Col Nombre <input type="number" id="colNombre" value="1" min="0"></label>
+          <label class="field">Col Precio <input type="number" id="colPrecio" value="2" min="0"></label>
+          <label class="field">Col Código <input type="number" id="colCodigo" value="-1" min="-1"> <span class="hint">(-1 = auto)</span></label>
+          <label class="field">Filas header <input type="number" id="skipRows" value="0" min="0"></label>
+        </div>
+        <p class="hint">Base 0 (A = 0). El Excel trae la <strong>Lista de precio 4</strong>; el resto de listas se calcula solo.</p>
       </section>
-
-      <p class="hint">Columnas en base 0 (A = 0, B = 1…). El Excel viene con la <strong>Lista de precio 4</strong>; el resto de listas se calcula solo.</p>
 
       <div class="actions">
-        <button id="generar" class="primary">⚡ Generar catálogo</button>
-        <button id="subir" class="secondary" disabled>☁️ Subir a la nube</button>
+        <button id="generar" class="btn primary">⚡ Generar catálogo</button>
+        <button id="subir" class="btn secondary" disabled>☁️ Subir a la nube</button>
       </div>
 
       <div id="status" class="status" role="status"></div>
 
       <section id="preview" hidden>
-        <h2>Vista previa</h2>
+        <h2 class="block-title">Vista previa</h2>
         <div id="previewBody" class="preview"></div>
       </section>
     </div>
+
+    <footer class="foot">LOLA · panel de catálogo</footer>
   </main>
 
   <script src="xlsx.full.min.js"></script>
