@@ -23,6 +23,13 @@ android/
     └── java/com/elladecide/lola/
         ├── LolaImeService.kt         ← InputMethodService + ComposeView
         ├── KeyboardController.kt     ← estado + orquestación catálogo/sync
+        ├── editor/                   ← núcleo IME (puro, testeable en JVM)
+        │   ├── EditorSession.kt      ← commit / composing / grapheme-delete / Enter
+        │   ├── EditorInfoClassifier.kt ← inputType + imeOptions → EditorProfile
+        │   ├── EditorConnection.kt   ← abstracción del InputConnection
+        │   ├── AndroidEditorConnection.kt ← adaptador al InputConnection real
+        │   ├── EditorProfile.kt      ← FieldClass / EditorAction / EnterDecision
+        │   └── Grapheme.kt           ← borrado por grapheme cluster
         ├── Mensaje.kt                ← formato de moneda + nombres de lista
         ├── Precio.kt                 ← carrito + motor de precios (buildMessage)
         ├── PrecioPngRenderer.kt     ← renderiza el PNG (filas + caja de TOTAL)
@@ -67,11 +74,26 @@ android/
 
 ## Siguiente
 
+- [x] **Núcleo IME** (F1): `EditorSession` + `EditorInfoClassifier` — borrado por
+      grapheme cluster, Enter según `imeOptions`, composición y clasificación de
+      `EditorInfo` (texto/número/teléfono/email/URI/password). Unit tests JVM en
+      `app/src/test/java/.../editor/`.
 - [ ] **Descuento MANUAL por ítem + concepto N/U + valorModo** (switches restantes
       de `buildLineParts`).
 - [ ] **Pantalla de configuración**: BASE_URL, secret, modo de imágenes.
 - [ ] **Sync real**: apuntar `SyncRepository.BASE_URL` a tu Worker y seedear D1
       (el `codigo_unico` se genera con la regla pendiente de backend/schema.sql).
+
+## Tests
+
+Unit tests (JVM, sin emulador):
+
+```bash
+cd android && ./gradlew testDebugUnitTest
+```
+
+Cubren `EditorInfoClassifier`, `Grapheme` y `EditorSession` (con un
+`FakeEditorConnection` en memoria).
 
 ## Nota sobre sync
 

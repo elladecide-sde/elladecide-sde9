@@ -7,9 +7,9 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.inputmethodservice.InputMethodService
 import android.net.Uri
-import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputContentInfo
 import androidx.compose.ui.platform.ComposeView
@@ -19,7 +19,14 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.savedstate.SavedStateRegistry
+import androidx.savedstate.SavedStateRegistryController
+import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.elladecide.lola.data.LolaDatabase
+import com.elladecide.lola.editor.AndroidEditorConnection
+import com.elladecide.lola.editor.EditorInfoClassifier
+import com.elladecide.lola.editor.EditorSession
 import com.elladecide.lola.ui.KeyboardScreen
 import java.io.File
 
@@ -30,49 +37,84 @@ import java.io.File
  * - Texto vía commitText(); PNG e imágenes vía commitContent() (como Gboard).
  * - Sin AccessibilityServices: el usuario SIEMPRE aprieta "Enviar" a mano.
  */
-class LolaImeService : InputMethodService(), LifecycleOwner {
+class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryOwner {
 
     private val lifecycleRegistry = LifecycleRegistry(this)
     override val lifecycle: Lifecycle get() = lifecycleRegistry
 
+    private val savedStateRegistryController = SavedStateRegistryController.create(this)
+    override val savedStateRegistry: SavedStateRegistry get() = savedStateRegistryController.savedStateRegistry
+
     private lateinit var database: LolaDatabase
     private lateinit var controller: KeyboardController
+    private val session = EditorSession()
 
     override fun onCreate() {
         super.onCreate()
+        savedStateRegistryController.performRestore(null)
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
         database = LolaDatabase.build(this)
-        controller = KeyboardController(lifecycleScope, ::commitText, ::commitImage, ::commitImageFile)
+        controller = KeyboardController(
+            lifecycleScope,
+            onCommitText = { session.commitText(it) },
+            onCommitImage = ::commitImage,
+            onCommitImageFile = ::commitImageFile,
+            onDelete = { session.deleteBackwards() },
+            onEnter = { session.sendEnter() },
+        )
+        controller.onCambiarAltura = { setInputView(buildInputView()) }
         controller.cargar(database, applicationContext)
+    }
+
+    override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
+        super.onStartInput(attribute, restarting)
+        session.onStartInput(
+            inputType = attribute?.inputType ?: 0,
+            imeOptions = attribute?.imeOptions ?: 0,
+            provider = { AndroidEditorConnection(currentInputConnection) },
+        )
+    }
+
+    override fun onFinishInput() {
+        super.onFinishInput()
+        session.onFinishInput()
     }
 
     override fun onCreateInputView(): View {
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED
         controller.rescanear(this)
-        return ComposeView(this).apply {
-            val h = (300 * resources.displayMetrics.density).toInt()
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, h)
+        return buildInputView()
+    }
+
+    private fun buildInputView(): View {
+        val alturaDp = if (controller.expandida) 440 else 250
+        val composeView = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@LolaImeService)
+            setViewTreeSavedStateRegistryOwner(this@LolaImeService)
             setContent { KeyboardScreen(controller) }
+        }
+        val alturaPx = (alturaDp * resources.displayMetrics.density).toInt()
+        return ImeRootView(this, this, alturaPx).apply {
+            addView(
+                composeView,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
         }
     }
 
+    override fun onEvaluateFullscreenMode(): Boolean = false
+
     override fun onEvaluateInputViewShown(): Boolean {
-        val variation = (currentInputEditorInfo?.inputType ?: 0) and InputType.TYPE_MASK_VARIATION
-        val esPassword = variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
-            variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD ||
-            variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
-            variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD
-        return !esPassword
+        val info = currentInputEditorInfo ?: return true
+        return !EditorInfoClassifier.classify(info.inputType, info.imeOptions).isPassword
     }
 
     override fun onDestroy() {
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         super.onDestroy()
-    }
-
-    private fun commitText(text: String) {
-        currentInputConnection?.commitText(text, 1)
     }
 
     /** Entrega un Bitmap (PNG de precios) vía commitContent(). */

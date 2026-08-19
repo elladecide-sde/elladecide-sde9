@@ -2,17 +2,24 @@ package com.elladecide.lola.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,20 +30,40 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.elladecide.lola.CapaTeclado
 import com.elladecide.lola.CartItem
 import com.elladecide.lola.KeyboardController
 import com.elladecide.lola.Mensaje
 import com.elladecide.lola.ModoResultado
 import com.elladecide.lola.Precio
+import com.elladecide.lola.ShiftEstado
 import com.elladecide.lola.data.ImageEntry
 import com.elladecide.lola.data.Product
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.floor
 
 // Paleta oscura de LOLA (coincide con la extensión: #1f2c34 / #00d4a8).
 private val LolaBg = Color(0xFF1F2C34)
@@ -54,24 +81,65 @@ private val LolaColors = darkColorScheme(
     onSurface = LolaText,
 )
 
+// ── Métricas del teclado ────────────────────────────────────────────────────
+
+private val ALTURA_TECLA = 52.dp
+private val LONG_PRESS_MS = 400L
+private val DOBLE_TAP_MS = 300L
+private val CELDA_POPUP = 48.dp
+private val ALTURA_POPUP = 56.dp
+
+// ── Pantalla principal ──────────────────────────────────────────────────────
+
 @Composable
 fun KeyboardScreen(controller: KeyboardController) {
     val context = LocalContext.current
+    var popup by remember { mutableStateOf<PopupInfo?>(null) }
     MaterialTheme(colorScheme = LolaColors) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight()
-                .background(LolaBg)
-                .padding(8.dp),
-        ) {
-            // Buscador
+        Box(Modifier.fillMaxWidth().fillMaxHeight().background(LolaBg)) {
+            ContenidoTeclado(
+                controller = controller,
+                context = context,
+                onPopupMostrar = { popup = it },
+                onPopupSeleccion = { popup = popup?.copy(seleccion = it) },
+                onPopupCerrar = { seleccion ->
+                    val info = popup
+                    if (info != null && seleccion >= 0) {
+                        controller.tecla(info.alternativas[seleccion])
+                    }
+                    popup = null
+                },
+            )
+            popup?.let { PopupAlternativas(it) }
+        }
+    }
+}
+
+@Composable
+private fun ContenidoTeclado(
+    controller: KeyboardController,
+    context: android.content.Context,
+    onPopupMostrar: (PopupInfo) -> Unit,
+    onPopupSeleccion: (Int) -> Unit,
+    onPopupCerrar: (Int) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .fillMaxHeight()
+            .padding(8.dp),
+    ) {
+        if (controller.expandida) {
+            Spacer(Modifier.height(4.dp))
+
+            // Buscador (el QWERTY lo alimenta; no abre el IME propio).
             OutlinedTextField(
                 value = controller.query,
-                onValueChange = controller::onQueryChanged,
+                onValueChange = {},
                 modifier = Modifier.fillMaxWidth(),
                 placeholder = { Text("Buscar producto…", color = LolaMuted) },
                 singleLine = true,
+                readOnly = true,
             )
 
             Spacer(Modifier.height(4.dp))
@@ -140,8 +208,404 @@ fun KeyboardScreen(controller: KeyboardController) {
                 ) { Text("ENVIAR") }
             }
         }
+
+        if (controller.capa == CapaTeclado.EMOJI) {
+            EmojiGrid(controller, Modifier.weight(1f))
+        } else {
+            if (!controller.expandida) {
+                Spacer(Modifier.weight(1f))
+            }
+            FilasTeclado(
+                controller = controller,
+                onPopupMostrar = onPopupMostrar,
+                onPopupSeleccion = onPopupSeleccion,
+                onPopupCerrar = onPopupCerrar,
+            )
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        FilaInferior(controller)
     }
 }
+
+// ── Teclado QWERTY ─────────────────────────────────────────────────────────
+
+private sealed interface Kb {
+    data class Char(val c: String) : Kb
+    data object Shift : Kb
+    data object Backspace : Kb
+    data object Space : Kb
+    data object Enter : Kb
+    data object Layer : Kb
+    data object Emoji : Kb
+    data object Lola : Kb
+}
+
+private val LETRAS: List<List<Kb>> = listOf(
+    "qwertyuiop".map { Kb.Char(it.toString()) },
+    "asdfghjklñ".map { Kb.Char(it.toString()) },
+    listOf(Kb.Shift) + "zxcvbnm".map { Kb.Char(it.toString()) } + listOf(Kb.Backspace),
+)
+
+private val SIMBOLOS: List<List<Kb>> = listOf(
+    "1234567890".map { Kb.Char(it.toString()) },
+    "@#$%&+-()".map { Kb.Char(it.toString()) },
+    listOf(Kb.Shift) + "áéíóúñ_/".map { Kb.Char(it.toString()) } + listOf(Kb.Backspace),
+)
+
+private val FILA_INFERIOR: List<Kb> = listOf(Kb.Layer, Kb.Emoji, Kb.Lola, Kb.Space, Kb.Enter)
+
+private val EMOJIS: List<String> = listOf(
+    "😀", "😁", "😂", "🤣", "😊", "😍", "😘", "😜", "🤪", "🤩",
+    "🥳", "😎", "🤓", "🥺", "😢", "😭", "😡", "🤯", "😱", "😴",
+    "🤗", "🤔", "🤷", "🙃", "🥰", "😇", "🤫", "🤤", "😅", "😉",
+    "👍", "👎", "👏", "🙏", "🤝", "💪", "👌", "✌️", "🤞", "👊",
+    "❤️", "💔", "🔥", "⭐", "✨", "🎉", "🎁", "💰", "💵", "💸",
+    "🛒", "📦", "🚚", "🏷️", "✅", "❌", "⚠️", "⏰", "📅", "📍",
+    "📞", "💬", "🙂", "🙈",
+)
+
+// Alternativas de long-press para la capa de letras (números en la fila
+// superior + tildes en vocales, como Gboard). Se capitalizan con shift.
+private val ALTERNATIVAS: Map<String, List<String>> = mapOf(
+    "q" to listOf("1"),
+    "w" to listOf("2"),
+    "e" to listOf("3", "é", "è", "ê", "ë", "ē"),
+    "r" to listOf("4"),
+    "t" to listOf("5"),
+    "y" to listOf("6"),
+    "u" to listOf("7", "ú", "ù", "û", "ü", "ū"),
+    "i" to listOf("8", "í", "ì", "î", "ï", "ī"),
+    "o" to listOf("9", "ó", "ò", "ô", "ö", "õ", "ø"),
+    "p" to listOf("0"),
+    "a" to listOf("á", "à", "â", "ä", "ã", "å"),
+    "c" to listOf("ç"),
+    "n" to listOf("ñ"),
+)
+
+private fun alternativasDe(c: String, mayusculas: Boolean): List<String> =
+    ALTERNATIVAS[c]?.let { lista ->
+        if (mayusculas) lista.map { it.uppercase() } else lista
+    } ?: emptyList()
+
+@Composable
+private fun FilasTeclado(
+    controller: KeyboardController,
+    onPopupMostrar: (PopupInfo) -> Unit,
+    onPopupSeleccion: (Int) -> Unit,
+    onPopupCerrar: (Int) -> Unit,
+) {
+    val filas = if (controller.capa == CapaTeclado.SIMBOLOS) SIMBOLOS else LETRAS
+    val conAlternativas = controller.capa == CapaTeclado.LETRAS
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        filas.forEach { fila ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                fila.forEach { tecla ->
+                    val alternativas = if (conAlternativas && tecla is Kb.Char) {
+                        alternativasDe(tecla.c, controller.shiftActivo)
+                    } else {
+                        emptyList()
+                    }
+                    Key(
+                        label = etiqueta(tecla, controller),
+                        modifier = Modifier.weight(peso(tecla)),
+                        acento = tecla !is Kb.Char,
+                        activo = esActiva(tecla, controller),
+                        alternativas = alternativas,
+                        repetir = if (tecla == Kb.Backspace) ({ controller.borrar() }) else null,
+                        onLongPress = if (tecla == Kb.Shift) ({ controller.fijarShift() }) else null,
+                        onDoubleTap = if (tecla == Kb.Shift) ({ controller.fijarShift() }) else null,
+                        onTap = { onKey(controller, tecla) },
+                        onPopupMostrar = onPopupMostrar,
+                        onPopupSeleccion = onPopupSeleccion,
+                        onPopupCerrar = onPopupCerrar,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilaInferior(controller: KeyboardController) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        FILA_INFERIOR.forEach { tecla ->
+            Key(
+                label = etiqueta(tecla, controller),
+                modifier = Modifier.weight(peso(tecla)),
+                acento = true,
+                activo = esActiva(tecla, controller),
+                repetir = when (tecla) {
+                    Kb.Space -> ({ controller.tecla(" ") })
+                    Kb.Enter -> null
+                    else -> null
+                },
+                onTap = { onKey(controller, tecla) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun EmojiGrid(controller: KeyboardController, modifier: Modifier = Modifier) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(8),
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        items(EMOJIS) { e ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { controller.emoji(e) }
+                    .padding(vertical = 4.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(e, fontSize = 22.sp)
+            }
+        }
+    }
+}
+
+private fun etiqueta(k: Kb, controller: KeyboardController): String = when (k) {
+    is Kb.Char -> if (controller.shiftActivo && controller.capa == CapaTeclado.LETRAS) k.c.uppercase() else k.c
+    Kb.Shift -> if (controller.shiftEstado == ShiftEstado.BLOQUEO) "⇪" else "⇧"
+    Kb.Backspace -> "⌫"
+    Kb.Space -> "␣"
+    Kb.Enter -> "⏎"
+    Kb.Layer -> if (controller.capa == CapaTeclado.LETRAS) "123" else "ABC"
+    Kb.Emoji -> "😀"
+    Kb.Lola -> "LOLA"
+}
+
+private fun peso(k: Kb): Float = when (k) {
+    is Kb.Char -> 1f
+    Kb.Shift, Kb.Backspace -> 1.5f
+    Kb.Space -> 4f
+    Kb.Enter -> 2f
+    Kb.Layer, Kb.Emoji, Kb.Lola -> 1.5f
+}
+
+private fun esActiva(k: Kb, controller: KeyboardController): Boolean = when (k) {
+    Kb.Shift -> controller.shiftActivo
+    Kb.Emoji -> controller.capa == CapaTeclado.EMOJI
+    Kb.Lola -> controller.expandida
+    else -> false
+}
+
+private fun onKey(controller: KeyboardController, k: Kb) {
+    when (k) {
+        is Kb.Char -> controller.tecla(k.c)
+        Kb.Shift -> controller.toggleShift()
+        Kb.Backspace -> controller.borrar()
+        Kb.Space -> controller.tecla(" ")
+        Kb.Enter -> controller.enter()
+        Kb.Layer -> controller.toggleSimbolos()
+        Kb.Emoji -> controller.toggleEmojis()
+        Kb.Lola -> controller.toggleExpandir()
+    }
+}
+
+// ── Popup de alternativas (long-press) ─────────────────────────────────────
+
+private data class PopupInfo(
+    val alternativas: List<String>,
+    val centerX: Int,
+    val topY: Int,
+    val seleccion: Int = -1,
+)
+
+@Composable
+private fun PopupAlternativas(info: PopupInfo) {
+    val density = LocalDensity.current
+    val celdaPx = with(density) { CELDA_POPUP.toPx() }
+    val altoPx = with(density) { ALTURA_POPUP.toPx() }
+    val teclaAltoPx = with(density) { ALTURA_TECLA.toPx() }
+    val left = (info.centerX - (celdaPx * info.alternativas.size) / 2).toInt()
+    val top = (if (info.topY - altoPx >= 0) info.topY - altoPx else info.topY + teclaAltoPx).toInt()
+    Box(
+        modifier = Modifier
+            .offset { IntOffset(left, top) }
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF3D4F59)),
+    ) {
+        Row {
+            info.alternativas.forEachIndexed { i, alt ->
+                val seleccionada = i == info.seleccion
+                Box(
+                    modifier = Modifier
+                        .width(CELDA_POPUP)
+                        .height(ALTURA_POPUP)
+                        .background(if (seleccionada) LolaAccent else Color.Transparent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        alt,
+                        color = if (seleccionada) Color.Black else LolaText,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ── Tecla con gestos (tap / doble tap / long-press / autorepeat) ───────────
+
+@Composable
+private fun Key(
+    label: String,
+    modifier: Modifier = Modifier,
+    acento: Boolean = false,
+    activo: Boolean = false,
+    alternativas: List<String> = emptyList(),
+    repetir: (() -> Unit)? = null,
+    onLongPress: (() -> Unit)? = null,
+    onDoubleTap: (() -> Unit)? = null,
+    onTap: () -> Unit,
+    onPopupMostrar: (PopupInfo) -> Unit = {},
+    onPopupSeleccion: (Int) -> Unit = {},
+    onPopupCerrar: (Int) -> Unit = {},
+) {
+    val density = LocalDensity.current
+    var posPx by remember { mutableStateOf(Offset.Zero) }
+    var sizePx by remember { mutableStateOf(IntSize.Zero) }
+    var lastDown by remember { mutableStateOf(0L) }
+    var pressed by remember { mutableStateOf(false) }
+
+    val altActuales by rememberUpdatedState(alternativas)
+    val repetirActual by rememberUpdatedState(repetir)
+    val longPressActual by rememberUpdatedState(onLongPress)
+    val dobleTapActual by rememberUpdatedState(onDoubleTap)
+    val tapActual by rememberUpdatedState(onTap)
+    val mostrarActual by rememberUpdatedState(onPopupMostrar)
+    val seleccionActual by rememberUpdatedState(onPopupSeleccion)
+    val cerrarActual by rememberUpdatedState(onPopupCerrar)
+
+    val bg = when {
+        pressed -> LolaAccent
+        activo -> Color(0xFF3D4F59)
+        else -> LolaSurface
+    }
+    val fg = when {
+        pressed -> Color.Black
+        acento -> LolaAccent
+        else -> LolaText
+    }
+
+    Box(
+        modifier = modifier
+            .height(ALTURA_TECLA)
+            .onGloballyPositioned {
+                posPx = it.positionInRoot()
+                sizePx = it.size
+            }
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    pressed = true
+                    try {
+                        val downTime = down.uptimeMillis
+                        val repetirFn = repetirActual
+                        val dobleTapFn = dobleTapActual
+                        val longPressFn = longPressActual
+                        val tapFn = tapActual
+                        val mostrarFn = mostrarActual
+                        val seleccionFn = seleccionActual
+                        val cerrarFn = cerrarActual
+                        val altList = altActuales
+
+                        // Autorepeat: acción inmediata + repetición acelerada.
+                        if (repetirFn != null) {
+                            repetirFn()
+                            var espera = 350L
+                            while (true) {
+                                val solto = withTimeoutOrNull(espera) {
+                                    while (true) {
+                                        val e = awaitPointerEvent()
+                                        if (e.changes.firstOrNull { it.id == down.id }?.changedToUp() == true) {
+                                            return@withTimeoutOrNull true
+                                        }
+                                    }
+                                }
+                                if (solto == true) break
+                                repetirFn()
+                                espera = (espera * 0.7).toLong().coerceAtLeast(40L)
+                            }
+                            return@awaitEachGesture
+                        }
+
+                        // Esperar up (tap) o long-press.
+                        val tap = withTimeoutOrNull(LONG_PRESS_MS) {
+                            while (true) {
+                                val e = awaitPointerEvent()
+                                if (e.changes.firstOrNull { it.id == down.id }?.changedToUp() == true) {
+                                    return@withTimeoutOrNull true
+                                }
+                            }
+                        }
+
+                        if (tap == true) {
+                            if (dobleTapFn != null && downTime - lastDown < DOBLE_TAP_MS) {
+                                dobleTapFn()
+                            } else {
+                                tapFn()
+                            }
+                            lastDown = downTime
+                        } else {
+                            // Long-press.
+                            when {
+                                altList.isNotEmpty() -> {
+                                    val celdaPx = with(density) { CELDA_POPUP.toPx() }
+                                    val centerX = posPx.x + sizePx.width / 2
+                                    val topY = posPx.y
+                                    val left = centerX - (altList.size * celdaPx) / 2
+                                    var seleccion = -1
+                                    mostrarFn(PopupInfo(altList, centerX.toInt(), topY.toInt()))
+                                    while (true) {
+                                        val e = awaitPointerEvent()
+                                        val change = e.changes.firstOrNull { it.id == down.id } ?: break
+                                        if (change.changedToUp()) break
+                                        val dedoX = posPx.x + change.position.x
+                                        val idx = floor((dedoX - left) / celdaPx).toInt()
+                                        seleccion = idx.coerceIn(0, altList.size - 1)
+                                        seleccionFn(seleccion)
+                                    }
+                                    cerrarFn(seleccion)
+                                    if (seleccion == -1) tapFn()
+                                }
+                                longPressFn != null -> {
+                                    longPressFn()
+                                    while (true) {
+                                        val e = awaitPointerEvent()
+                                        if (e.changes.firstOrNull { it.id == down.id }?.changedToUp() == true) break
+                                    }
+                                }
+                            }
+                        }
+                    } finally {
+                        pressed = false
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, color = fg, fontWeight = FontWeight.Bold)
+    }
+}
+
+// ── Resultados / Carrito (modo LOLA expandido) ──────────────────────────────
 
 @Composable
 private fun Resultados(controller: KeyboardController, modifier: Modifier = Modifier) {

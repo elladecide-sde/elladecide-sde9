@@ -7,7 +7,7 @@ node_modules/
 android/.gradle/
 android/build/
 android/app/build/
-android/local.properties
+local.properties
 android/.idea/
 *.iml
 
