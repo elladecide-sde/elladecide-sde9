@@ -187,6 +187,13 @@ class KeyboardController(
 
     fun alternativas(k: Key): List<String> = keyEngine.alternatives(k)
 
+    /** Descripción legible de la tecla para accesibilidad (TalkBack). */
+    fun descripcion(k: Key): String = keyEngine.contentDescription(k, profile)
+
+    /** Estado a anunciar, incluyendo el modo LOLA expandido (que no conoce el motor). */
+    fun descripcionEstado(k: Key): String? = keyEngine.stateDescription(k)
+        ?: if (k.type == KeyType.LOLA && expandida) "Modo LOLA activado" else null
+
     /** Procesa una tecla vía el motor y enruta el efecto resultante. */
     fun press(k: Key) {
         when (val e = keyEngine.press(k)) {

@@ -151,4 +151,36 @@ class KeyEngineTest {
         assertEquals("➤", e.label(Key.ENTER, EditorProfile.EMPTY.copy(enterAction = EditorAction.SEND)))
         assertEquals("⏎", e.label(Key.ENTER, EditorProfile.EMPTY.copy(isMultiline = true)))
     }
+
+    @Test
+    fun `content description usa el nombre de la accion no el glifo`() {
+        val e = KeyEngine()
+        assertEquals("Retroceso", e.contentDescription(Key.BACKSPACE, EditorProfile.EMPTY))
+        assertEquals("Espacio", e.contentDescription(Key.SPACE, EditorProfile.EMPTY))
+        assertEquals("Mayúsculas", e.contentDescription(Key.SHIFT, EditorProfile.EMPTY))
+        assertEquals("Mover cursor a la izquierda", e.contentDescription(Key.LEFT, EditorProfile.EMPTY))
+        assertEquals("a", e.contentDescription(Key.char("a"), EditorProfile.EMPTY))
+    }
+
+    @Test
+    fun `content description del enter refleja la accion del editor`() {
+        val e = KeyEngine()
+        assertEquals("Nueva línea", e.contentDescription(Key.ENTER, EditorProfile.EMPTY))
+        assertEquals("Listo", e.contentDescription(Key.ENTER, EditorProfile.EMPTY.copy(enterAction = EditorAction.DONE)))
+        assertEquals("Buscar", e.contentDescription(Key.ENTER, EditorProfile.EMPTY.copy(enterAction = EditorAction.SEARCH)))
+        assertEquals("Nueva línea", e.contentDescription(Key.ENTER, EditorProfile.EMPTY.copy(isMultiline = true)))
+    }
+
+    @Test
+    fun `state description anuncia shift y emoji activos`() {
+        val e = KeyEngine()
+        assertEquals(null, e.stateDescription(Key.SHIFT))
+        e.press(Key.SHIFT)
+        assertEquals("Mayúscula para una letra", e.stateDescription(Key.SHIFT))
+        e.lockShift()
+        assertEquals("Bloqueo de mayúsculas activado", e.stateDescription(Key.SHIFT))
+        assertEquals(null, e.stateDescription(Key.EMOJI))
+        e.press(Key.EMOJI)
+        assertEquals("Teclado de emojis activo", e.stateDescription(Key.EMOJI))
+    }
 }

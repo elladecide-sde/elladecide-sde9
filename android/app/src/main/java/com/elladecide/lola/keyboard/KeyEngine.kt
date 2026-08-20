@@ -87,6 +87,46 @@ class KeyEngine {
         else -> false
     }
 
+    /**
+     * Descripción legible de la tecla para accesibilidad (TalkBack). A
+     * diferencia de [label], usa el nombre de la acción, no el glifo visual
+     * ("Retroceso" en vez de "⌫").
+     */
+    fun contentDescription(key: Key, profile: EditorProfile): String = when (key.type) {
+        KeyType.CHAR -> key.char ?: ""
+        KeyType.SHIFT -> "Mayúsculas"
+        KeyType.BACKSPACE -> "Retroceso"
+        KeyType.SPACE -> "Espacio"
+        KeyType.ENTER -> enterDescription(profile)
+        KeyType.LAYER -> if (layer == KeyboardLayer.SYMBOLS) "Letras" else "Números y símbolos"
+        KeyType.EMOJI -> "Emojis"
+        KeyType.LOLA -> "Modo LOLA"
+        KeyType.LEFT -> "Mover cursor a la izquierda"
+        KeyType.RIGHT -> "Mover cursor a la derecha"
+    }
+
+    /** Estado a anunciar (o null) cuando la tecla está activa/pulsada. */
+    fun stateDescription(key: Key): String? = when {
+        key.type == KeyType.SHIFT && shift == ShiftState.BLOQUEO -> "Bloqueo de mayúsculas activado"
+        key.type == KeyType.SHIFT && shift == ShiftState.MAYUSCULA -> "Mayúscula para una letra"
+        key.type == KeyType.EMOJI && layer == KeyboardLayer.EMOJI -> "Teclado de emojis activo"
+        key.type == KeyType.LAYER && layer == KeyboardLayer.SYMBOLS -> "Teclado de símbolos activo"
+        else -> null
+    }
+
+    private fun enterDescription(profile: EditorProfile): String {
+        if (profile.isMultiline) return "Nueva línea"
+        return when (profile.enterAction) {
+            EditorAction.DONE -> "Listo"
+            EditorAction.GO -> "Ir"
+            EditorAction.NEXT -> "Siguiente"
+            EditorAction.SEARCH -> "Buscar"
+            EditorAction.SEND -> "Enviar"
+            EditorAction.PREVIOUS -> "Anterior"
+            EditorAction.NONE, EditorAction.UNSPECIFIED -> "Nueva línea"
+        }
+    }
+
     /** Fija mayúsculas (doble tap / long-press sobre Shift). */
     fun lockShift() {
         shift = ShiftState.BLOQUEO

@@ -47,6 +47,7 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
 
     private lateinit var database: LolaDatabase
     private lateinit var controller: KeyboardController
+    private lateinit var rootView: ImeRootView
     private val session = EditorSession()
 
     override fun onCreate() {
@@ -63,7 +64,7 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
             onEnter = { session.sendEnter() },
             onMoveCursor = { session.moveCursor(it) },
         )
-        controller.onCambiarAltura = { setInputView(buildInputView()) }
+        controller.onCambiarAltura = { redimensionar() }
         controller.cargar(database, applicationContext)
     }
 
@@ -89,14 +90,12 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
     }
 
     private fun buildInputView(): View {
-        val alturaDp = if (controller.expandida) 440 else 250
         val composeView = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@LolaImeService)
             setViewTreeSavedStateRegistryOwner(this@LolaImeService)
             setContent { KeyboardScreen(controller) }
         }
-        val alturaPx = (alturaDp * resources.displayMetrics.density).toInt()
-        return ImeRootView(this, this, alturaPx).apply {
+        rootView = ImeRootView(this, this, alturaPx(controller.expandida)).apply {
             addView(
                 composeView,
                 ViewGroup.LayoutParams(
@@ -105,6 +104,24 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
                 ),
             )
         }
+        return rootView
+    }
+
+    /**
+     * Redimensiona la ventana del IME al expandir/contraer el teclado, sin
+     * recrear el `ComposeView`. Antes se llamaba a `setInputView(buildInputView())`,
+     * que destruía la composición y podía perder foco/estado visual.
+     */
+    private fun redimensionar() {
+        if (::rootView.isInitialized) {
+            rootView.setAlturaPx(alturaPx(controller.expandida))
+        }
+    }
+
+    /** Altura de la ventana del IME en px según el modo (contraído/expandido). */
+    private fun alturaPx(expandida: Boolean): Int {
+        val alturaDp = if (expandida) 440 else 250
+        return (alturaDp * resources.displayMetrics.density).toInt()
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false

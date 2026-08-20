@@ -24,8 +24,24 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 class ImeRootView(
     context: Context,
     private val ime: LolaImeService,
-    private val alturaPx: Int,
+    private var alturaPx: Int,
 ) : FrameLayout(context) {
+
+    /**
+     * Redimensiona el contenedor sin recrear la jerarquía de views.
+     *
+     * `requestLayout()` propaga el re-measure por la cadena de parents: el
+     * `mInputFrame` (WRAP_CONTENT) vuelve a medir este contenedor, que reporta
+     * la nueva [alturaPx] vía [onMeasure], y la ventana del IME se ajusta. Así
+     * el `ComposeView` (y su composición) se conservan intactos al expandir o
+     * contraer el teclado, a diferencia de `setInputView()` que los destruía.
+     */
+    fun setAlturaPx(px: Int) {
+        if (px != alturaPx) {
+            alturaPx = px
+            requestLayout()
+        }
+    }
 
     /**
      * Fija la altura del contenedor en [alturaPx].

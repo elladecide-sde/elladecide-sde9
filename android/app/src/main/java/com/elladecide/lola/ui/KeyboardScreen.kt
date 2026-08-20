@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -48,6 +49,12 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -62,6 +69,7 @@ import com.elladecide.lola.Precio
 import com.elladecide.lola.data.ImageEntry
 import com.elladecide.lola.data.Product
 import com.elladecide.lola.keyboard.AutoRepeat
+import com.elladecide.lola.keyboard.KeyboardMetrics
 import com.elladecide.lola.keyboard.KeyType
 import com.elladecide.lola.keyboard.KeyboardLayer
 import kotlinx.coroutines.withTimeoutOrNull
@@ -83,25 +91,32 @@ private val LolaColors = darkColorScheme(
     onSurface = LolaText,
 )
 
-// ── Métricas del teclado ────────────────────────────────────────────────────
+// ── Tiempos de gestos (no son geometría) ────────────────────────────────────
 
-private val ALTURA_TECLA = 52.dp
 private val LONG_PRESS_MS = 400L
 private val DOBLE_TAP_MS = 300L
-private val CELDA_POPUP = 48.dp
-private val ALTURA_POPUP = 56.dp
 
 // ── Pantalla principal ──────────────────────────────────────────────────────
 
 @Composable
 fun KeyboardScreen(controller: KeyboardController) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     var popup by remember { mutableStateOf<PopupInfo?>(null) }
     MaterialTheme(colorScheme = LolaColors) {
-        Box(Modifier.fillMaxWidth().fillMaxHeight().background(LolaBg)) {
+        BoxWithConstraints(
+            Modifier.fillMaxWidth().fillMaxHeight().background(LolaBg),
+        ) {
+            // Las métricas se recalculan solo si cambia el alto real de la
+            // ventana o el font scale (no en cada recomposición).
+            val availableHeight = maxHeight.value
+            val metrics = remember(availableHeight, density.fontScale) {
+                KeyboardMetrics.compute(availableHeight, density.fontScale)
+            }
             ContenidoTeclado(
                 controller = controller,
                 context = context,
+                metrics = metrics,
                 onPopupMostrar = { popup = it },
                 onPopupSeleccion = { popup = popup?.copy(seleccion = it) },
                 onPopupCerrar = { seleccion ->
@@ -112,7 +127,7 @@ fun KeyboardScreen(controller: KeyboardController) {
                     popup = null
                 },
             )
-            popup?.let { PopupAlternativas(it) }
+            popup?.let { PopupAlternativas(it, metrics) }
         }
     }
 }
@@ -121,6 +136,7 @@ fun KeyboardScreen(controller: KeyboardController) {
 private fun ContenidoTeclado(
     controller: KeyboardController,
     context: android.content.Context,
+    metrics: KeyboardMetrics,
     onPopupMostrar: (PopupInfo) -> Unit,
     onPopupSeleccion: (Int) -> Unit,
     onPopupCerrar: (Int) -> Unit,
@@ -129,10 +145,10 @@ private fun ContenidoTeclado(
         modifier = Modifier
             .fillMaxWidth()
             .fillMaxHeight()
-            .padding(8.dp),
+            .padding(metrics.screenPaddingDp.dp),
     ) {
         if (controller.expandida) {
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(metrics.spacingDp.dp))
 
             // Buscador (el QWERTY lo alimenta; no abre el IME propio).
             OutlinedTextField(
@@ -144,7 +160,7 @@ private fun ContenidoTeclado(
                 readOnly = true,
             )
 
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(metrics.spacingDp.dp))
 
             // Carpeta de imágenes · descuento · modo
             Row(
@@ -174,7 +190,7 @@ private fun ContenidoTeclado(
                 }
             }
 
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(metrics.spacingDp.dp))
 
             // Área principal: resultados o carrito.
             if (controller.query.isNotBlank()) {
@@ -183,7 +199,7 @@ private fun ContenidoTeclado(
                 Carrito(controller, Modifier.weight(1f))
             }
 
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(metrics.spacingDp.dp + 2.dp))
 
             // Barra inferior: estado + total + enviar.
             Row(
@@ -219,15 +235,16 @@ private fun ContenidoTeclado(
             }
             FilasTeclado(
                 controller = controller,
+                metrics = metrics,
                 onPopupMostrar = onPopupMostrar,
                 onPopupSeleccion = onPopupSeleccion,
                 onPopupCerrar = onPopupCerrar,
             )
         }
 
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(metrics.spacingDp.dp))
 
-        FilaInferior(controller)
+        FilaInferior(controller, metrics)
     }
 }
 
@@ -246,19 +263,22 @@ private val EMOJIS: List<String> = listOf(
 @Composable
 private fun FilasTeclado(
     controller: KeyboardController,
+    metrics: KeyboardMetrics,
     onPopupMostrar: (PopupInfo) -> Unit,
     onPopupSeleccion: (Int) -> Unit,
     onPopupCerrar: (Int) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(metrics.spacingDp.dp)) {
         controller.teclasActuales().forEach { fila ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(metrics.spacingDp.dp),
             ) {
                 fila.forEach { tecla ->
                     Tecla(
                         label = controller.etiqueta(tecla),
+                        descripcion = controller.descripcion(tecla),
+                        descripcionEstado = controller.descripcionEstado(tecla),
                         modifier = Modifier.weight(controller.peso(tecla)),
                         acento = tecla.type != KeyType.CHAR,
                         activo = controller.esActiva(tecla),
@@ -267,6 +287,7 @@ private fun FilasTeclado(
                         onLongPress = if (tecla.type == KeyType.SHIFT) ({ controller.fijarShift() }) else null,
                         onDoubleTap = if (tecla.type == KeyType.SHIFT) ({ controller.fijarShift() }) else null,
                         onTap = { controller.press(tecla) },
+                        metrics = metrics,
                         onPopupMostrar = onPopupMostrar,
                         onPopupSeleccion = onPopupSeleccion,
                         onPopupCerrar = onPopupCerrar,
@@ -278,19 +299,22 @@ private fun FilasTeclado(
 }
 
 @Composable
-private fun FilaInferior(controller: KeyboardController) {
+private fun FilaInferior(controller: KeyboardController, metrics: KeyboardMetrics) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(metrics.spacingDp.dp),
     ) {
         controller.filaInferior().forEach { tecla ->
             Tecla(
                 label = controller.etiqueta(tecla),
+                descripcion = controller.descripcion(tecla),
+                descripcionEstado = controller.descripcionEstado(tecla),
                 modifier = Modifier.weight(controller.peso(tecla)),
                 acento = true,
                 activo = controller.esActiva(tecla),
                 repetir = if (tecla.type == KeyType.SPACE) ({ controller.tecla(" ") }) else null,
                 onTap = { controller.press(tecla) },
+                metrics = metrics,
             )
         }
     }
@@ -310,6 +334,7 @@ private fun EmojiGrid(controller: KeyboardController, modifier: Modifier = Modif
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
                     .clickable { controller.emoji(e) }
+                    .semantics { contentDescription = "Emoji $e" }
                     .padding(vertical = 4.dp),
                 contentAlignment = Alignment.Center,
             ) {
@@ -329,11 +354,11 @@ private data class PopupInfo(
 )
 
 @Composable
-private fun PopupAlternativas(info: PopupInfo) {
+private fun PopupAlternativas(info: PopupInfo, metrics: KeyboardMetrics) {
     val density = LocalDensity.current
-    val celdaPx = with(density) { CELDA_POPUP.toPx() }
-    val altoPx = with(density) { ALTURA_POPUP.toPx() }
-    val teclaAltoPx = with(density) { ALTURA_TECLA.toPx() }
+    val celdaPx = with(density) { metrics.popupCellDp.dp.toPx() }
+    val altoPx = with(density) { metrics.popupHeightDp.dp.toPx() }
+    val teclaAltoPx = with(density) { metrics.keyHeightDp.dp.toPx() }
     val left = (info.centerX - (celdaPx * info.alternativas.size) / 2).toInt()
     val top = (if (info.topY - altoPx >= 0) info.topY - altoPx else info.topY + teclaAltoPx).toInt()
     Box(
@@ -347,8 +372,8 @@ private fun PopupAlternativas(info: PopupInfo) {
                 val seleccionada = i == info.seleccion
                 Box(
                     modifier = Modifier
-                        .width(CELDA_POPUP)
-                        .height(ALTURA_POPUP)
+                        .width(metrics.popupCellDp.dp)
+                        .height(metrics.popupHeightDp.dp)
                         .background(if (seleccionada) LolaAccent else Color.Transparent),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -379,6 +404,9 @@ private fun Tecla(
     onLongPress: (() -> Unit)? = null,
     onDoubleTap: (() -> Unit)? = null,
     onTap: () -> Unit,
+    descripcion: String? = null,
+    descripcionEstado: String? = null,
+    metrics: KeyboardMetrics,
     onPopupMostrar: (PopupInfo) -> Unit = {},
     onPopupSeleccion: (Int) -> Unit = {},
     onPopupCerrar: (Int) -> Unit = {},
@@ -411,13 +439,21 @@ private fun Tecla(
 
     Box(
         modifier = modifier
-            .height(ALTURA_TECLA)
+            .height(metrics.keyHeightDp.dp)
             .onGloballyPositioned {
                 posPx = it.positionInRoot()
                 sizePx = it.size
             }
             .clip(RoundedCornerShape(8.dp))
             .background(bg)
+            .semantics {
+                descripcion?.let { contentDescription = it }
+                descripcionEstado?.let { stateDescription = it }
+                role = Role.Button
+                // Activable desde TalkBack (double-tap) sin interferir con los
+                // gestos de puntero reales (long-press/doble-tap/autorepeat).
+                onClick(label = descripcion) { onTap(); true }
+            }
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
@@ -474,7 +510,7 @@ private fun Tecla(
                             // Long-press.
                             when {
                                 altList.isNotEmpty() -> {
-                                    val celdaPx = with(density) { CELDA_POPUP.toPx() }
+                                    val celdaPx = with(density) { metrics.popupCellDp.dp.toPx() }
                                     val centerX = posPx.x + sizePx.width / 2
                                     val topY = posPx.y
                                     val left = centerX - (altList.size * celdaPx) / 2
@@ -508,7 +544,7 @@ private fun Tecla(
             },
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = fg, fontWeight = FontWeight.Bold)
+        Text(label, color = fg, fontWeight = FontWeight.Bold, fontSize = metrics.labelSizeSp.sp)
     }
 }
 
