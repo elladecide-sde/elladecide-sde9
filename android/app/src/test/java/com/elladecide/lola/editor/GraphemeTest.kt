@@ -36,6 +36,14 @@ class GraphemeTest {
     }
 
     @Test
+    fun `firstClusterLength mide el primer cluster`() {
+        assertEquals(1, Grapheme.firstClusterLength("abc"))
+        assertEquals(2, Grapheme.firstClusterLength("😀x"))
+        assertEquals(2, Grapheme.firstClusterLength("e\u0301x"))
+        assertEquals(0, Grapheme.firstClusterLength(""))
+    }
+
+    @Test
     fun `cadena vacia`() {
         assertEquals(0, Grapheme.lastClusterLength(""))
         assertEquals("", Grapheme.removeLastCluster(""))

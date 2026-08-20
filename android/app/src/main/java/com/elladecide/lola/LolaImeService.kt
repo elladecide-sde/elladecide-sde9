@@ -61,6 +61,7 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
             onCommitImageFile = ::commitImageFile,
             onDelete = { session.deleteBackwards() },
             onEnter = { session.sendEnter() },
+            onMoveCursor = { session.moveCursor(it) },
         )
         controller.onCambiarAltura = { setInputView(buildInputView()) }
         controller.cargar(database, applicationContext)
@@ -73,6 +74,7 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
             imeOptions = attribute?.imeOptions ?: 0,
             provider = { AndroidEditorConnection(currentInputConnection) },
         )
+        controller.profile = session.profile
     }
 
     override fun onFinishInput() {

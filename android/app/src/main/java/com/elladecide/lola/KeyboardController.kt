@@ -13,6 +13,12 @@ import com.elladecide.lola.data.LolaDatabase
 import com.elladecide.lola.data.Product
 import com.elladecide.lola.data.SeedCatalog
 import com.elladecide.lola.data.SyncRepository
+import com.elladecide.lola.editor.EditorProfile
+import com.elladecide.lola.keyboard.Key
+import com.elladecide.lola.keyboard.KeyEffect
+import com.elladecide.lola.keyboard.KeyEngine
+import com.elladecide.lola.keyboard.KeyType
+import com.elladecide.lola.keyboard.KeyboardLayer
 import com.elladecide.lola.search.SearchEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,13 +27,12 @@ import kotlinx.coroutines.withContext
 
 enum class ModoResultado { TEXTO, PNG }
 
-enum class CapaTeclado { LETRAS, SIMBOLOS, EMOJI }
-
-enum class ShiftEstado { MINUSCULAS, MAYUSCULA, BLOQUEO }
-
 /**
  * Estado del teclado (Compose state holder) + orquestación de catálogo/sync,
  * del pedido (carrito) y de la carpeta de imágenes.
+ *
+ * El estado y la semántica del teclado base (capa, shift, layouts, teclas)
+ * viven en [keyEngine], que es puro y testeable en la JVM.
  */
 class KeyboardController(
     private val scope: CoroutineScope,
@@ -36,6 +41,7 @@ class KeyboardController(
     private val onCommitImageFile: (Uri) -> Unit,
     private val onDelete: () -> Unit,
     private val onEnter: () -> Unit,
+    private val onMoveCursor: (Int) -> Unit,
 ) {
     var query by mutableStateOf("")
     var results by mutableStateOf<List<Product>>(emptyList())
@@ -46,11 +52,15 @@ class KeyboardController(
     var expandedCodigo by mutableStateOf<String?>(null)
     var imagenes by mutableStateOf<List<ImageEntry>>(emptyList())
     var expandida by mutableStateOf(false)
-    var shiftEstado by mutableStateOf(ShiftEstado.MINUSCULAS)
-    var capa by mutableStateOf(CapaTeclado.LETRAS)
 
-    /** True si las letras se muestran en mayúscula (shift temporal o bloqueado). */
-    val shiftActivo: Boolean get() = shiftEstado != ShiftEstado.MINUSCULAS
+    /** Motor del teclado base (capa + shift + resolución de teclas). */
+    val keyEngine = KeyEngine()
+
+    /** Perfil del editor activo (para la etiqueta/acción del Enter). */
+    var profile by mutableStateOf(EditorProfile.EMPTY)
+
+    /** Capa visible, delegada al motor. */
+    val capa: KeyboardLayer get() = keyEngine.layer
 
     /** Callback que redimensiona la ventana del IME cuando cambia [expandida]. */
     var onCambiarAltura: (() -> Unit)? = null
@@ -116,22 +126,24 @@ class KeyboardController(
     }
 
     /**
-     * Escribe una tecla. En modo LOLA (expandida) alimenta la búsqueda; en modo
-     * teclado normal (contraída) tipea en la app anfitriona.
-     *
-     * Capitaliza según el estado de shift y consume el shift temporal (una sola
-     * letra en mayúscula) después de la primera letra.
+     * Escribe texto ya resuelto por el motor. En modo LOLA (expandida) alimenta
+     * la búsqueda; en modo teclado normal (contraída) tipea en la app anfitriona.
      */
     fun tecla(texto: String) {
-        val efectivo = if (shiftActivo && capa == CapaTeclado.LETRAS) texto.uppercase() else texto
         if (expandida) {
-            onQueryChanged(query + efectivo)
+            onQueryChanged(query + texto)
         } else {
-            onCommitText(efectivo)
+            onCommitText(texto)
         }
-        if (shiftEstado == ShiftEstado.MAYUSCULA) {
-            shiftEstado = ShiftEstado.MINUSCULAS
-        }
+    }
+
+    /**
+     * Inserta una alternativa de long-press (ya viene capitalizada por el
+     * motor) y consume el shift temporal, como haría una letra normal.
+     */
+    fun comprometerAlternativa(texto: String) {
+        keyEngine.consumeTemporaryShift()
+        tecla(texto)
     }
 
     /** Borra un carácter: de la búsqueda si estamos en modo LOLA, o de la app. */
@@ -143,35 +155,49 @@ class KeyboardController(
         }
     }
 
-    /** Tecla Enter: siempre se envía a la app anfitriona (nueva línea). */
+    /** Tecla Enter: se envía a la app anfitriona (acción IME o nueva línea). */
     fun enter() {
         onEnter()
     }
 
-    fun toggleShift() {
-        shiftEstado = when (shiftEstado) {
-            ShiftEstado.MINUSCULAS -> ShiftEstado.MAYUSCULA
-            ShiftEstado.MAYUSCULA -> ShiftEstado.MINUSCULAS
-            ShiftEstado.BLOQUEO -> ShiftEstado.MINUSCULAS
-        }
-    }
-
     /** Fija el bloqueo de mayúsculas (long-press o doble tap en Shift). */
     fun fijarShift() {
-        shiftEstado = ShiftEstado.BLOQUEO
-    }
-
-    fun toggleSimbolos() {
-        capa = if (capa == CapaTeclado.SIMBOLOS) CapaTeclado.LETRAS else CapaTeclado.SIMBOLOS
-    }
-
-    fun toggleEmojis() {
-        capa = if (capa == CapaTeclado.EMOJI) CapaTeclado.LETRAS else CapaTeclado.EMOJI
+        keyEngine.lockShift()
     }
 
     /** Inserta un emoji siempre en la app anfitriona (no alimenta la búsqueda). */
     fun emoji(e: String) {
         onCommitText(e)
+    }
+
+    // ── Teclado base (delegado al motor) ──
+
+    /** Layout de la capa actual, ya resuelto por el motor. */
+    fun teclasActuales(): List<List<Key>> = keyEngine.layout()
+
+    /** Fila inferior compartida (layer/emoji/cursor/espacio/lola/enter). */
+    fun filaInferior(): List<Key> = keyEngine.bottomRow()
+
+    fun etiqueta(k: Key): String = keyEngine.label(k, profile)
+
+    fun peso(k: Key): Float = keyEngine.weight(k)
+
+    /** Resalta la tecla (shift activo, capa emoji o modo LOLA expandido). */
+    fun esActiva(k: Key): Boolean = keyEngine.isActive(k) || (k.type == KeyType.LOLA && expandida)
+
+    fun alternativas(k: Key): List<String> = keyEngine.alternatives(k)
+
+    /** Procesa una tecla vía el motor y enruta el efecto resultante. */
+    fun press(k: Key) {
+        when (val e = keyEngine.press(k)) {
+            is KeyEffect.Commit -> tecla(e.text)
+            KeyEffect.Delete -> borrar()
+            KeyEffect.Enter -> enter()
+            KeyEffect.MoveLeft -> onMoveCursor(-1)
+            KeyEffect.MoveRight -> onMoveCursor(1)
+            KeyEffect.ToggleExpand -> toggleExpandir()
+            null -> Unit
+        }
     }
 
     /** Alterna entre teclado expandido (modo LOLA) y contraído (teclado normal). */

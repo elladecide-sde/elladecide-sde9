@@ -69,6 +69,26 @@ class EditorSession {
     }
 
     /**
+     * Mueve el cursor un grapheme hacia la izquierda (delta negativo) o la
+     * derecha (delta positivo). Se calcula la posición leyendo el contexto
+     * antes/después del cursor (ventana [Grapheme.LOOKBACK]) y se fija con
+     * `setSelection` colapsando cualquier selección previa.
+     */
+    fun moveCursor(delta: Int) {
+        val conn = connectionProvider() ?: return
+        val before = conn.getTextBeforeCursor(Grapheme.LOOKBACK, 0)?.toString() ?: return
+        val after = conn.getTextAfterCursor(Grapheme.LOOKBACK, 0)?.toString() ?: ""
+        val cursorPos = before.length
+        val target = when {
+            delta < 0 -> (cursorPos - Grapheme.lastClusterLength(before)).coerceAtLeast(0)
+            delta > 0 -> (cursorPos + Grapheme.firstClusterLength(after))
+                .coerceAtMost(cursorPos + after.length)
+            else -> cursorPos
+        }
+        conn.setSelection(target, target)
+    }
+
+    /**
      * Enter según el editor: si el campo es multiline o no declara acción,
      * manda nueva línea; si declara una acción (Done/Go/Next/Search/Send), la
      * despacha y, si el editor no la maneja, cae a nueva línea.

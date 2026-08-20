@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -53,15 +54,16 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.elladecide.lola.CapaTeclado
 import com.elladecide.lola.CartItem
 import com.elladecide.lola.KeyboardController
 import com.elladecide.lola.Mensaje
 import com.elladecide.lola.ModoResultado
 import com.elladecide.lola.Precio
-import com.elladecide.lola.ShiftEstado
 import com.elladecide.lola.data.ImageEntry
 import com.elladecide.lola.data.Product
+import com.elladecide.lola.keyboard.AutoRepeat
+import com.elladecide.lola.keyboard.KeyType
+import com.elladecide.lola.keyboard.KeyboardLayer
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.floor
 
@@ -105,7 +107,7 @@ fun KeyboardScreen(controller: KeyboardController) {
                 onPopupCerrar = { seleccion ->
                     val info = popup
                     if (info != null && seleccion >= 0) {
-                        controller.tecla(info.alternativas[seleccion])
+                        controller.comprometerAlternativa(info.alternativas[seleccion])
                     }
                     popup = null
                 },
@@ -209,7 +211,7 @@ private fun ContenidoTeclado(
             }
         }
 
-        if (controller.capa == CapaTeclado.EMOJI) {
+        if (controller.capa == KeyboardLayer.EMOJI) {
             EmojiGrid(controller, Modifier.weight(1f))
         } else {
             if (!controller.expandida) {
@@ -229,32 +231,7 @@ private fun ContenidoTeclado(
     }
 }
 
-// ── Teclado QWERTY ─────────────────────────────────────────────────────────
-
-private sealed interface Kb {
-    data class Char(val c: String) : Kb
-    data object Shift : Kb
-    data object Backspace : Kb
-    data object Space : Kb
-    data object Enter : Kb
-    data object Layer : Kb
-    data object Emoji : Kb
-    data object Lola : Kb
-}
-
-private val LETRAS: List<List<Kb>> = listOf(
-    "qwertyuiop".map { Kb.Char(it.toString()) },
-    "asdfghjklñ".map { Kb.Char(it.toString()) },
-    listOf(Kb.Shift) + "zxcvbnm".map { Kb.Char(it.toString()) } + listOf(Kb.Backspace),
-)
-
-private val SIMBOLOS: List<List<Kb>> = listOf(
-    "1234567890".map { Kb.Char(it.toString()) },
-    "@#$%&+-()".map { Kb.Char(it.toString()) },
-    listOf(Kb.Shift) + "áéíóúñ_/".map { Kb.Char(it.toString()) } + listOf(Kb.Backspace),
-)
-
-private val FILA_INFERIOR: List<Kb> = listOf(Kb.Layer, Kb.Emoji, Kb.Lola, Kb.Space, Kb.Enter)
+// ── Teclado QWERTY (render a partir del KeyEngine) ─────────────────────────
 
 private val EMOJIS: List<String> = listOf(
     "😀", "😁", "😂", "🤣", "😊", "😍", "😘", "😜", "🤪", "🤩",
@@ -266,29 +243,6 @@ private val EMOJIS: List<String> = listOf(
     "📞", "💬", "🙂", "🙈",
 )
 
-// Alternativas de long-press para la capa de letras (números en la fila
-// superior + tildes en vocales, como Gboard). Se capitalizan con shift.
-private val ALTERNATIVAS: Map<String, List<String>> = mapOf(
-    "q" to listOf("1"),
-    "w" to listOf("2"),
-    "e" to listOf("3", "é", "è", "ê", "ë", "ē"),
-    "r" to listOf("4"),
-    "t" to listOf("5"),
-    "y" to listOf("6"),
-    "u" to listOf("7", "ú", "ù", "û", "ü", "ū"),
-    "i" to listOf("8", "í", "ì", "î", "ï", "ī"),
-    "o" to listOf("9", "ó", "ò", "ô", "ö", "õ", "ø"),
-    "p" to listOf("0"),
-    "a" to listOf("á", "à", "â", "ä", "ã", "å"),
-    "c" to listOf("ç"),
-    "n" to listOf("ñ"),
-)
-
-private fun alternativasDe(c: String, mayusculas: Boolean): List<String> =
-    ALTERNATIVAS[c]?.let { lista ->
-        if (mayusculas) lista.map { it.uppercase() } else lista
-    } ?: emptyList()
-
 @Composable
 private fun FilasTeclado(
     controller: KeyboardController,
@@ -296,30 +250,23 @@ private fun FilasTeclado(
     onPopupSeleccion: (Int) -> Unit,
     onPopupCerrar: (Int) -> Unit,
 ) {
-    val filas = if (controller.capa == CapaTeclado.SIMBOLOS) SIMBOLOS else LETRAS
-    val conAlternativas = controller.capa == CapaTeclado.LETRAS
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        filas.forEach { fila ->
+        controller.teclasActuales().forEach { fila ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 fila.forEach { tecla ->
-                    val alternativas = if (conAlternativas && tecla is Kb.Char) {
-                        alternativasDe(tecla.c, controller.shiftActivo)
-                    } else {
-                        emptyList()
-                    }
-                    Key(
-                        label = etiqueta(tecla, controller),
-                        modifier = Modifier.weight(peso(tecla)),
-                        acento = tecla !is Kb.Char,
-                        activo = esActiva(tecla, controller),
-                        alternativas = alternativas,
-                        repetir = if (tecla == Kb.Backspace) ({ controller.borrar() }) else null,
-                        onLongPress = if (tecla == Kb.Shift) ({ controller.fijarShift() }) else null,
-                        onDoubleTap = if (tecla == Kb.Shift) ({ controller.fijarShift() }) else null,
-                        onTap = { onKey(controller, tecla) },
+                    Tecla(
+                        label = controller.etiqueta(tecla),
+                        modifier = Modifier.weight(controller.peso(tecla)),
+                        acento = tecla.type != KeyType.CHAR,
+                        activo = controller.esActiva(tecla),
+                        alternativas = controller.alternativas(tecla),
+                        repetir = if (tecla.type == KeyType.BACKSPACE) ({ controller.borrar() }) else null,
+                        onLongPress = if (tecla.type == KeyType.SHIFT) ({ controller.fijarShift() }) else null,
+                        onDoubleTap = if (tecla.type == KeyType.SHIFT) ({ controller.fijarShift() }) else null,
+                        onTap = { controller.press(tecla) },
                         onPopupMostrar = onPopupMostrar,
                         onPopupSeleccion = onPopupSeleccion,
                         onPopupCerrar = onPopupCerrar,
@@ -336,18 +283,14 @@ private fun FilaInferior(controller: KeyboardController) {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        FILA_INFERIOR.forEach { tecla ->
-            Key(
-                label = etiqueta(tecla, controller),
-                modifier = Modifier.weight(peso(tecla)),
+        controller.filaInferior().forEach { tecla ->
+            Tecla(
+                label = controller.etiqueta(tecla),
+                modifier = Modifier.weight(controller.peso(tecla)),
                 acento = true,
-                activo = esActiva(tecla, controller),
-                repetir = when (tecla) {
-                    Kb.Space -> ({ controller.tecla(" ") })
-                    Kb.Enter -> null
-                    else -> null
-                },
-                onTap = { onKey(controller, tecla) },
+                activo = controller.esActiva(tecla),
+                repetir = if (tecla.type == KeyType.SPACE) ({ controller.tecla(" ") }) else null,
+                onTap = { controller.press(tecla) },
             )
         }
     }
@@ -373,45 +316,6 @@ private fun EmojiGrid(controller: KeyboardController, modifier: Modifier = Modif
                 Text(e, fontSize = 22.sp)
             }
         }
-    }
-}
-
-private fun etiqueta(k: Kb, controller: KeyboardController): String = when (k) {
-    is Kb.Char -> if (controller.shiftActivo && controller.capa == CapaTeclado.LETRAS) k.c.uppercase() else k.c
-    Kb.Shift -> if (controller.shiftEstado == ShiftEstado.BLOQUEO) "⇪" else "⇧"
-    Kb.Backspace -> "⌫"
-    Kb.Space -> "␣"
-    Kb.Enter -> "⏎"
-    Kb.Layer -> if (controller.capa == CapaTeclado.LETRAS) "123" else "ABC"
-    Kb.Emoji -> "😀"
-    Kb.Lola -> "LOLA"
-}
-
-private fun peso(k: Kb): Float = when (k) {
-    is Kb.Char -> 1f
-    Kb.Shift, Kb.Backspace -> 1.5f
-    Kb.Space -> 4f
-    Kb.Enter -> 2f
-    Kb.Layer, Kb.Emoji, Kb.Lola -> 1.5f
-}
-
-private fun esActiva(k: Kb, controller: KeyboardController): Boolean = when (k) {
-    Kb.Shift -> controller.shiftActivo
-    Kb.Emoji -> controller.capa == CapaTeclado.EMOJI
-    Kb.Lola -> controller.expandida
-    else -> false
-}
-
-private fun onKey(controller: KeyboardController, k: Kb) {
-    when (k) {
-        is Kb.Char -> controller.tecla(k.c)
-        Kb.Shift -> controller.toggleShift()
-        Kb.Backspace -> controller.borrar()
-        Kb.Space -> controller.tecla(" ")
-        Kb.Enter -> controller.enter()
-        Kb.Layer -> controller.toggleSimbolos()
-        Kb.Emoji -> controller.toggleEmojis()
-        Kb.Lola -> controller.toggleExpandir()
     }
 }
 
@@ -461,8 +365,11 @@ private fun PopupAlternativas(info: PopupInfo) {
 
 // ── Tecla con gestos (tap / doble tap / long-press / autorepeat) ───────────
 
+/** True cuando el puntero se soltó o fue cancelado (dejó de estar presionado). */
+private fun PointerInputChange.terminado(): Boolean = changedToUp() || !pressed
+
 @Composable
-private fun Key(
+private fun Tecla(
     label: String,
     modifier: Modifier = Modifier,
     acento: Boolean = false,
@@ -529,19 +436,19 @@ private fun Key(
                         // Autorepeat: acción inmediata + repetición acelerada.
                         if (repetirFn != null) {
                             repetirFn()
-                            var espera = 350L
+                            var espera = AutoRepeat.INITIAL_DELAY_MS
                             while (true) {
                                 val solto = withTimeoutOrNull(espera) {
                                     while (true) {
                                         val e = awaitPointerEvent()
-                                        if (e.changes.firstOrNull { it.id == down.id }?.changedToUp() == true) {
+                                        if (e.changes.firstOrNull { it.id == down.id }?.terminado() == true) {
                                             return@withTimeoutOrNull true
                                         }
                                     }
                                 }
                                 if (solto == true) break
                                 repetirFn()
-                                espera = (espera * 0.7).toLong().coerceAtLeast(40L)
+                                espera = AutoRepeat.nextDelay(espera)
                             }
                             return@awaitEachGesture
                         }

@@ -25,6 +25,14 @@ object Grapheme {
         return end - start
     }
 
+    /** Longitud en unidades UTF-16 del primer grapheme cluster de [afterCursor]. */
+    fun firstClusterLength(afterCursor: CharSequence): Int {
+        if (afterCursor.isEmpty()) return 0
+        val it = BreakIterator.getCharacterInstance()
+        it.setText(afterCursor.toString())
+        return it.next()
+    }
+
     /** Devuelve [text] sin el último grapheme cluster. */
     fun removeLastCluster(text: String): String {
         if (text.isEmpty()) return text

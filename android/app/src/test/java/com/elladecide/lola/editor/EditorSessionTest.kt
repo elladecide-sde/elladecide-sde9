@@ -111,4 +111,43 @@ class EditorSessionTest {
         s.deleteBackwards() // sin conexión → no-op sin crash
         assertEquals("", fake.text)
     }
+
+    @Test
+    fun `mover cursor a la izquierda`() {
+        val fake = FakeEditorConnection("hola")
+        session(fake).moveCursor(-1)
+        assertEquals(3, fake.cursorPos)
+    }
+
+    @Test
+    fun `mover cursor a la derecha`() {
+        val fake = FakeEditorConnection("hola")
+        val s = session(fake)
+        s.moveCursor(-1)
+        s.moveCursor(1)
+        assertEquals(4, fake.cursorPos)
+    }
+
+    @Test
+    fun `mover izquierda salta un grapheme completo`() {
+        val fake = FakeEditorConnection("hola 😀")
+        session(fake).moveCursor(-1)
+        assertEquals(5, fake.cursorPos) // "hola " son 5 code units
+    }
+
+    @Test
+    fun `mover izquierda al inicio no hace nada`() {
+        val fake = FakeEditorConnection("hola")
+        val s = session(fake)
+        repeat(10) { s.moveCursor(-1) }
+        assertEquals(0, fake.cursorPos)
+    }
+
+    @Test
+    fun `mover derecha al final no hace nada`() {
+        val fake = FakeEditorConnection("hola")
+        val s = session(fake)
+        repeat(10) { s.moveCursor(1) }
+        assertEquals(4, fake.cursorPos)
+    }
 }
