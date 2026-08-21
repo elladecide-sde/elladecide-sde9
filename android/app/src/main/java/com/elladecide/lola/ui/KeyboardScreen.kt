@@ -1,5 +1,7 @@
 package com.elladecide.lola.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -31,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +44,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
@@ -49,6 +54,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
@@ -361,9 +367,16 @@ private fun PopupAlternativas(info: PopupInfo, metrics: KeyboardMetrics) {
     val teclaAltoPx = with(density) { metrics.keyHeightDp.dp.toPx() }
     val left = (info.centerX - (celdaPx * info.alternativas.size) / 2).toInt()
     val top = (if (info.topY - altoPx >= 0) info.topY - altoPx else info.topY + teclaAltoPx).toInt()
+    // Escala de aparición del popup (no interfiere con la selección por dedo).
+    val scale = remember { Animatable(0.8f) }
+    LaunchedEffect(Unit) { scale.animateTo(1f, tween(120)) }
     Box(
         modifier = Modifier
             .offset { IntOffset(left, top) }
+            .graphicsLayer {
+                scaleX = scale.value
+                scaleY = scale.value
+            }
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF3D4F59)),
     ) {
@@ -412,6 +425,7 @@ private fun Tecla(
     onPopupCerrar: (Int) -> Unit = {},
 ) {
     val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
     var posPx by remember { mutableStateOf(Offset.Zero) }
     var sizePx by remember { mutableStateOf(IntSize.Zero) }
     var lastDown by remember { mutableStateOf(0L) }
@@ -458,6 +472,7 @@ private fun Tecla(
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     pressed = true
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     try {
                         val downTime = down.uptimeMillis
                         val repetirFn = repetirActual
@@ -508,6 +523,7 @@ private fun Tecla(
                             lastDown = downTime
                         } else {
                             // Long-press.
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             when {
                                 altList.isNotEmpty() -> {
                                     val celdaPx = with(density) { metrics.popupCellDp.dp.toPx() }
