@@ -63,8 +63,8 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
             onDelete = { session.deleteBackwards() },
             onEnter = { session.sendEnter() },
             onMoveCursor = { session.moveCursor(it) },
+            onCambiarAltura = { redimensionar() },
         )
-        controller.onCambiarAltura = { redimensionar() }
         controller.cargar(database, applicationContext)
     }
 

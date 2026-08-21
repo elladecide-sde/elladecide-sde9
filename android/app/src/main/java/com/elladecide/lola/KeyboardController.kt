@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -33,7 +34,14 @@ enum class ModoResultado { TEXTO, PNG }
  *
  * El estado y la semántica del teclado base (capa, shift, layouts, teclas)
  * viven en [keyEngine], que es puro y testeable en la JVM.
+ *
+ * [Stable]: todas las propiedades públicas son `val` o snapshot-state
+ * observables (`mutableStateOf`), así Compose puede saltear la recomposición
+ * de los hijos cuyo estado no cambió. Sin esta anotación el compilador marca
+ * al controller como "unstable" y fuerza recomponer todos los hijos en cada
+ * recomposición del padre (ver reporte `-PcomposeCompilerMetrics`).
  */
+@Stable
 class KeyboardController(
     private val scope: CoroutineScope,
     private val onCommitText: (String) -> Unit,
@@ -42,6 +50,7 @@ class KeyboardController(
     private val onDelete: () -> Unit,
     private val onEnter: () -> Unit,
     private val onMoveCursor: (Int) -> Unit,
+    private val onCambiarAltura: (() -> Unit)? = null,
 ) {
     var query by mutableStateOf("")
     var results by mutableStateOf<List<Product>>(emptyList())
@@ -61,9 +70,6 @@ class KeyboardController(
 
     /** Capa visible, delegada al motor. */
     val capa: KeyboardLayer get() = keyEngine.layer
-
-    /** Callback que redimensiona la ventana del IME cuando cambia [expandida]. */
-    var onCambiarAltura: (() -> Unit)? = null
 
     private var productos: List<Product> = emptyList()
     private var lastScannedUri: String? = null
