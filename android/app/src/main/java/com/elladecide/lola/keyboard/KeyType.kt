@@ -15,4 +15,5 @@ enum class KeyType {
     LOLA,
     LEFT,
     RIGHT,
+    UNDO,
 }

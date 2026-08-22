@@ -16,6 +16,7 @@ sealed interface KeyEffect {
     data object Enter : KeyEffect
     data object MoveLeft : KeyEffect
     data object MoveRight : KeyEffect
+    data object Undo : KeyEffect
     data object ToggleExpand : KeyEffect
 }
 
@@ -68,6 +69,7 @@ class KeyEngine {
         KeyType.LOLA -> "LOLA"
         KeyType.LEFT -> "◀"
         KeyType.RIGHT -> "▶"
+        KeyType.UNDO -> "↶"
     }
 
     /** Peso relativo de la tecla en su fila. */
@@ -77,7 +79,7 @@ class KeyEngine {
         KeyType.SPACE -> 4f
         KeyType.ENTER -> 2f
         KeyType.LAYER, KeyType.EMOJI, KeyType.LOLA -> 1.5f
-        KeyType.LEFT, KeyType.RIGHT -> 1f
+        KeyType.LEFT, KeyType.RIGHT, KeyType.UNDO -> 1f
     }
 
     /** Resalta la tecla (shift activo, capa emoji). */
@@ -103,6 +105,7 @@ class KeyEngine {
         KeyType.LOLA -> "Modo LOLA"
         KeyType.LEFT -> "Mover cursor a la izquierda"
         KeyType.RIGHT -> "Mover cursor a la derecha"
+        KeyType.UNDO -> "Deshacer"
     }
 
     /** Estado a anunciar (o null) cuando la tecla está activa/pulsada. */
@@ -168,6 +171,7 @@ class KeyEngine {
         KeyType.LOLA -> KeyEffect.ToggleExpand
         KeyType.LEFT -> KeyEffect.MoveLeft
         KeyType.RIGHT -> KeyEffect.MoveRight
+        KeyType.UNDO -> KeyEffect.Undo
     }
 
     private fun enterLabel(profile: EditorProfile): String {

@@ -22,22 +22,71 @@ class EditorSession {
 
     private var composing = ""
 
+    /** Último texto committeado por el tipeo (palabra + separador), objetivo del undo. */
+    private var undoableText: String? = null
+
     /** Arranca una sesión de input con el tipo/opciones del editor y la conexión. */
     fun onStartInput(inputType: Int, imeOptions: Int, provider: () -> EditorConnection?) {
         connectionProvider = provider
         profile = EditorInfoClassifier.classify(inputType, imeOptions)
         composing = ""
+        undoableText = null
     }
 
     fun onFinishInput() {
         connectionProvider = { null }
         profile = EditorProfile.EMPTY
         composing = ""
+        undoableText = null
     }
 
+    /**
+     * Commit directo (emoji, mensaje LOLA): no participa de la composición de
+     * palabras ni del undo. Si hay composición activa, la finaliza primero para
+     * no perderla (el `commitText` del sistema reemplazaría el composing).
+     */
     fun commitText(text: String) {
-        connectionProvider()?.commitText(text, 1)
+        val conn = connectionProvider() ?: return
+        if (composing.isNotEmpty()) {
+            conn.finishComposingText()
+            composing = ""
+        }
+        conn.commitText(text, 1)
+        undoableText = null
     }
+
+    /**
+     * Tipeo con límite de palabra: las letras/dígitos/apóstrofe se acumulan en
+     * composición (para predecir y reemplazar); el espacio/puntuación finaliza
+     * la palabra en composición y commitea el separador. La unidad de undo queda
+     * como "palabra + separador" para que deshacer la deje completa.
+     */
+    fun typeText(text: String) {
+        val conn = connectionProvider() ?: return
+        if (text.isEmpty()) return
+        if (text.all { it.isWordChar() }) {
+            composing += text
+            conn.setComposingText(composing, 1)
+        } else {
+            val word = composing
+            if (word.isNotEmpty()) {
+                conn.finishComposingText()
+                composing = ""
+            }
+            conn.commitText(text, 1)
+            undoableText = word + text
+        }
+    }
+
+    /** Reemplaza la palabra en composición (selección de una sugerencia). */
+    fun replaceComposingText(text: String) {
+        val conn = connectionProvider() ?: return
+        composing = text
+        conn.setComposingText(text, 1)
+    }
+
+    /** Palabra actual en composición (vacía si no hay composición activa). */
+    fun currentWord(): String = composing
 
     fun setComposingText(text: String) {
         connectionProvider()?.setComposingText(text, 1)
@@ -65,7 +114,12 @@ class EditorSession {
         }
         val before = conn.getTextBeforeCursor(Grapheme.LOOKBACK, 0) ?: return
         val len = Grapheme.lastClusterLength(before)
-        if (len > 0) conn.deleteSurroundingText(len, 0)
+        if (len > 0) {
+            conn.deleteSurroundingText(len, 0)
+            // Borrar texto committeado invalida el snapshot de undo (el cursor
+            // y el buffer ya no coinciden con lo registrado).
+            undoableText = null
+        }
     }
 
     /**
@@ -76,6 +130,16 @@ class EditorSession {
      */
     fun moveCursor(delta: Int) {
         val conn = connectionProvider() ?: return
+        // Con composición activa, el cursor "lógico" vive dentro del composing;
+        // se finaliza la palabra (se commitea) para que la navegación opere
+        // sobre texto committeado y el setSelection quede consistente.
+        if (composing.isNotEmpty()) {
+            conn.finishComposingText()
+            composing = ""
+        }
+        // Mover el cursor invalida el snapshot de undo (el cursor ya no está
+        // justo después de la última palabra committeada).
+        undoableText = null
         val before = conn.getTextBeforeCursor(Grapheme.LOOKBACK, 0)?.toString() ?: return
         val after = conn.getTextAfterCursor(Grapheme.LOOKBACK, 0)?.toString() ?: ""
         val cursorPos = before.length
@@ -95,6 +159,11 @@ class EditorSession {
      */
     fun sendEnter() {
         val conn = connectionProvider() ?: return
+        if (composing.isNotEmpty()) {
+            conn.finishComposingText()
+            composing = ""
+        }
+        undoableText = null
         when (val decision = profile.enterDecision) {
             is EnterDecision.Newline -> conn.sendKeyEventNewline()
             is EnterDecision.Action -> {
@@ -104,4 +173,25 @@ class EditorSession {
             }
         }
     }
+
+    /**
+     * Deshace el último texto committeado por el tipeo (palabra + separador).
+     * Si hay composición activa, la elimina completa (equivale a deshacer la
+     * palabra en curso).
+     */
+    fun undo() {
+        val conn = connectionProvider() ?: return
+        if (composing.isNotEmpty()) {
+            composing = ""
+            conn.setComposingText("", 1)
+            conn.finishComposingText()
+            return
+        }
+        val text = undoableText ?: return
+        conn.deleteSurroundingText(text.length, 0)
+        undoableText = null
+    }
+
+    /** Carácter que forma parte de una palabra (letra, dígito o apóstrofe). */
+    private fun Char.isWordChar(): Boolean = isLetterOrDigit() || this == '\''
 }

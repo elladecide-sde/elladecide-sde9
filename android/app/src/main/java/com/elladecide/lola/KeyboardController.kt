@@ -20,6 +20,7 @@ import com.elladecide.lola.keyboard.KeyEffect
 import com.elladecide.lola.keyboard.KeyEngine
 import com.elladecide.lola.keyboard.KeyType
 import com.elladecide.lola.keyboard.KeyboardLayer
+import com.elladecide.lola.language.SuggestionProvider
 import com.elladecide.lola.search.SearchEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +52,11 @@ class KeyboardController(
     private val onEnter: () -> Unit,
     private val onMoveCursor: (Int) -> Unit,
     private val onCambiarAltura: (() -> Unit)? = null,
+    private val onTypeText: (String) -> Unit,
+    private val onReplaceComposing: (String) -> Unit,
+    private val onUndo: () -> Unit,
+    private val onCurrentWord: () -> String,
+    private val suggestionProvider: SuggestionProvider,
 ) {
     var query by mutableStateOf("")
     var results by mutableStateOf<List<Product>>(emptyList())
@@ -67,6 +73,18 @@ class KeyboardController(
 
     /** Perfil del editor activo (para la etiqueta/acción del Enter). */
     var profile by mutableStateOf(EditorProfile.EMPTY)
+
+    /** Candidatos actuales del motor de sugerencias (modo teclado normal). */
+    var suggestions by mutableStateOf<List<String>>(emptyList())
+        private set
+
+    /** Privacidad: opt-out del usuario para desactivar las sugerencias. */
+    var suggestionsEnabled by mutableStateOf(true)
+
+    /** True cuando la barra de sugerencias debe mostrarse. */
+    val sugerenciasVisibles: Boolean
+        get() = !expandida && capa != KeyboardLayer.EMOJI &&
+            suggestionsEnabled && profile.suggestionsAllowed && suggestions.isNotEmpty()
 
     /** Capa visible, delegada al motor. */
     val capa: KeyboardLayer get() = keyEngine.layer
@@ -133,13 +151,15 @@ class KeyboardController(
 
     /**
      * Escribe texto ya resuelto por el motor. En modo LOLA (expandida) alimenta
-     * la búsqueda; en modo teclado normal (contraída) tipea en la app anfitriona.
+     * la búsqueda; en modo teclado normal (contraída) tipea en la app anfitriona
+     * con composición de palabra (para poder sugerir y reemplazar).
      */
     fun tecla(texto: String) {
         if (expandida) {
             onQueryChanged(query + texto)
         } else {
-            onCommitText(texto)
+            onTypeText(texto)
+            refreshSuggestions()
         }
     }
 
@@ -158,6 +178,28 @@ class KeyboardController(
             onQueryChanged(query.dropLast(1))
         } else {
             onDelete()
+            refreshSuggestions()
+        }
+    }
+
+    /** Selecciona una sugerencia: reemplaza la palabra en composición. */
+    fun sugerir(palabra: String) {
+        onReplaceComposing(palabra)
+        refreshSuggestions()
+    }
+
+    /** Deshace la última palabra committeada por el tipeo. */
+    fun deshacer() {
+        onUndo()
+        refreshSuggestions()
+    }
+
+    /** Recalcula candidatos a partir de la palabra en composición actual. */
+    private fun refreshSuggestions() {
+        suggestions = if (!expandida && suggestionsEnabled && profile.suggestionsAllowed) {
+            suggestionProvider.suggest(onCurrentWord(), "", 3)
+        } else {
+            emptyList()
         }
     }
 
@@ -174,6 +216,7 @@ class KeyboardController(
     /** Inserta un emoji siempre en la app anfitriona (no alimenta la búsqueda). */
     fun emoji(e: String) {
         onCommitText(e)
+        refreshSuggestions()
     }
 
     // ── Teclado base (delegado al motor) ──
@@ -206,8 +249,15 @@ class KeyboardController(
             is KeyEffect.Commit -> tecla(e.text)
             KeyEffect.Delete -> borrar()
             KeyEffect.Enter -> enter()
-            KeyEffect.MoveLeft -> onMoveCursor(-1)
-            KeyEffect.MoveRight -> onMoveCursor(1)
+            KeyEffect.MoveLeft -> {
+                onMoveCursor(-1)
+                refreshSuggestions()
+            }
+            KeyEffect.MoveRight -> {
+                onMoveCursor(1)
+                refreshSuggestions()
+            }
+            KeyEffect.Undo -> deshacer()
             KeyEffect.ToggleExpand -> toggleExpandir()
             null -> Unit
         }

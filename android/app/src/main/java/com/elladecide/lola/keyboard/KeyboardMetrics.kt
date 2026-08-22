@@ -25,6 +25,7 @@ data class KeyboardMetrics(
         const val SCREEN_PADDING_DP = 8f
         const val POPUP_CELL_DP = 48f
         const val POPUP_HEIGHT_DP = 56f
+        const val SUGGESTION_BAR_HEIGHT_DP = 36f
 
         /** Filas de letras/símbolos + fila inferior. */
         const val KEY_ROWS = 3

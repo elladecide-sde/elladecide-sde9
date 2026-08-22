@@ -94,6 +94,13 @@ class KeyEngineTest {
     }
 
     @Test
+    fun `tecla de deshacer produce efecto undo`() {
+        val e = KeyEngine()
+        assertEquals(KeyEffect.Undo, e.press(Key.UNDO))
+        assertEquals("Deshacer", e.contentDescription(Key.UNDO, EditorProfile.EMPTY))
+    }
+
+    @Test
     fun `layer alterna letras y simbolos y cambia la etiqueta`() {
         val e = KeyEngine()
         assertEquals(KeyboardLayer.LETTERS, e.layer)

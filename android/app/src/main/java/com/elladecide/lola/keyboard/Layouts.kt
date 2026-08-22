@@ -22,9 +22,9 @@ object Layouts {
         "_.!?,:'\"/".map { Key.char(it.toString()) } + listOf(Key.BACKSPACE),
     )
 
-    /** Fila inferior compartida, con navegación de cursor. */
+    /** Fila inferior compartida, con navegación de cursor y deshacer. */
     val BOTTOM_ROW: List<Key> = listOf(
-        Key.LAYER, Key.EMOJI, Key.LEFT, Key.SPACE, Key.RIGHT, Key.LOLA, Key.ENTER,
+        Key.UNDO, Key.LAYER, Key.EMOJI, Key.LEFT, Key.SPACE, Key.RIGHT, Key.LOLA, Key.ENTER,
     )
 
     /**

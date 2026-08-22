@@ -62,6 +62,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -114,10 +115,18 @@ fun KeyboardScreen(controller: KeyboardController) {
             Modifier.fillMaxWidth().fillMaxHeight().background(LolaBg),
         ) {
             // Las métricas se recalculan solo si cambia el alto real de la
-            // ventana o el font scale (no en cada recomposición).
+            // ventana, el font scale o la visibilidad de la barra de sugerencias
+            // (no en cada recomposición). La barra resta del alto disponible para
+            // que las teclas se encojan adaptativamente en vez de desbordar.
             val availableHeight = maxHeight.value
-            val metrics = remember(availableHeight, density.fontScale) {
-                KeyboardMetrics.compute(availableHeight, density.fontScale)
+            val showSuggestions = controller.sugerenciasVisibles
+            val metrics = remember(availableHeight, density.fontScale, showSuggestions) {
+                val heightForKeys = if (showSuggestions) {
+                    availableHeight - KeyboardMetrics.SUGGESTION_BAR_HEIGHT_DP
+                } else {
+                    availableHeight
+                }
+                KeyboardMetrics.compute(heightForKeys, density.fontScale)
             }
             ContenidoTeclado(
                 controller = controller,
@@ -239,6 +248,9 @@ private fun ContenidoTeclado(
             if (!controller.expandida) {
                 Spacer(Modifier.weight(1f))
             }
+            if (controller.sugerenciasVisibles) {
+                BarraSugerencias(controller)
+            }
             FilasTeclado(
                 controller = controller,
                 metrics = metrics,
@@ -265,6 +277,33 @@ private val EMOJIS: List<String> = listOf(
     "🛒", "📦", "🚚", "🏷️", "✅", "❌", "⚠️", "⏰", "📅", "📍",
     "📞", "💬", "🙂", "🙈",
 )
+
+@Composable
+private fun BarraSugerencias(controller: KeyboardController) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(KeyboardMetrics.SUGGESTION_BAR_HEIGHT_DP.dp)
+            .padding(bottom = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        controller.suggestions.forEach { palabra ->
+            Text(
+                text = palabra,
+                color = LolaText,
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(LolaSurface)
+                    .clickable { controller.sugerir(palabra) }
+                    .semantics { contentDescription = "Sugerencia $palabra" }
+                    .padding(vertical = 8.dp),
+            )
+        }
+    }
+}
 
 @Composable
 private fun FilasTeclado(

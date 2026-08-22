@@ -150,4 +150,100 @@ class EditorSessionTest {
         repeat(10) { s.moveCursor(1) }
         assertEquals(4, fake.cursorPos)
     }
+
+    @Test
+    fun `typeText acumula letras en composicion`() {
+        val fake = FakeEditorConnection()
+        val s = session(fake)
+        s.typeText("h")
+        s.typeText("o")
+        assertEquals("ho", fake.text)
+        assertEquals("ho", s.currentWord())
+    }
+
+    @Test
+    fun `typeText espacio commitea palabra y espacio`() {
+        val fake = FakeEditorConnection()
+        val s = session(fake)
+        s.typeText("h")
+        s.typeText("o")
+        s.typeText(" ")
+        assertEquals("ho ", fake.text)
+        assertEquals("", s.currentWord())
+    }
+
+    @Test
+    fun `typeText puntuacion commitea palabra y puntuacion`() {
+        val fake = FakeEditorConnection()
+        val s = session(fake)
+        s.typeText("h")
+        s.typeText("i")
+        s.typeText("!")
+        assertEquals("hi!", fake.text)
+    }
+
+    @Test
+    fun `replaceComposingText reemplaza la palabra en composicion`() {
+        val fake = FakeEditorConnection()
+        val s = session(fake)
+        s.typeText("h")
+        s.typeText("o")
+        s.replaceComposingText("hola")
+        assertEquals("hola", fake.text)
+        assertEquals("hola", s.currentWord())
+    }
+
+    @Test
+    fun `undo borra palabra y separador`() {
+        val fake = FakeEditorConnection()
+        val s = session(fake)
+        s.typeText("h")
+        s.typeText("o")
+        s.typeText(" ")
+        assertEquals("ho ", fake.text)
+        s.undo()
+        assertEquals("", fake.text)
+    }
+
+    @Test
+    fun `undo sin palabra borra el separador`() {
+        val fake = FakeEditorConnection()
+        val s = session(fake)
+        s.typeText(" ")
+        s.typeText(" ")
+        s.undo()
+        assertEquals(" ", fake.text)
+    }
+
+    @Test
+    fun `undo con composicion activa la elimina completa`() {
+        val fake = FakeEditorConnection()
+        val s = session(fake)
+        s.typeText("h")
+        s.typeText("o")
+        assertEquals("ho", fake.text)
+        s.undo()
+        assertEquals("", fake.text)
+    }
+
+    @Test
+    fun `mover cursor con composicion la commitea antes`() {
+        val fake = FakeEditorConnection()
+        val s = session(fake)
+        s.typeText("h")
+        s.typeText("o")
+        s.moveCursor(-1)
+        assertEquals("ho", fake.text)
+        assertEquals(1, fake.cursorPos)
+    }
+
+    @Test
+    fun `commit directo finaliza la composicion previa`() {
+        val fake = FakeEditorConnection()
+        val s = session(fake)
+        s.typeText("h")
+        s.typeText("o")
+        s.commitText("!")
+        assertEquals("ho!", fake.text)
+    }
 }

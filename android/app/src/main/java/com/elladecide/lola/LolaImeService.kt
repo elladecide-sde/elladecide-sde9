@@ -27,6 +27,8 @@ import com.elladecide.lola.data.LolaDatabase
 import com.elladecide.lola.editor.AndroidEditorConnection
 import com.elladecide.lola.editor.EditorInfoClassifier
 import com.elladecide.lola.editor.EditorSession
+import com.elladecide.lola.language.PlaceholderWords
+import com.elladecide.lola.language.PrefixSuggestionProvider
 import com.elladecide.lola.ui.KeyboardScreen
 import java.io.File
 
@@ -64,7 +66,14 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
             onEnter = { session.sendEnter() },
             onMoveCursor = { session.moveCursor(it) },
             onCambiarAltura = { redimensionar() },
+            onTypeText = { session.typeText(it) },
+            onReplaceComposing = { session.replaceComposingText(it) },
+            onUndo = { session.undo() },
+            onCurrentWord = { session.currentWord() },
+            suggestionProvider = PrefixSuggestionProvider(PlaceholderWords.LIST),
         )
+        controller.suggestionsEnabled = getSharedPreferences("lola", Context.MODE_PRIVATE)
+            .getBoolean("suggestions_enabled", true)
         controller.cargar(database, applicationContext)
     }
 
