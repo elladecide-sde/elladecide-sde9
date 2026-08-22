@@ -48,4 +48,32 @@ class GraphemeTest {
         assertEquals(0, Grapheme.lastClusterLength(""))
         assertEquals("", Grapheme.removeLastCluster(""))
     }
+
+    @Test
+    fun `wordLengthBackwards borra la palabra`() {
+        assertEquals(4, Grapheme.wordLengthBackwards("hola"))
+        assertEquals(5, Grapheme.wordLengthBackwards("hola mundo"))
+        assertEquals(6, Grapheme.wordLengthBackwards("hola mundo "))
+    }
+
+    @Test
+    fun `wordLengthBackwards salta espacio y borra la palabra previa`() {
+        assertEquals(5, Grapheme.wordLengthBackwards("hola "))
+    }
+
+    @Test
+    fun `wordLengthBackwards puntuacion borra un cluster`() {
+        assertEquals(1, Grapheme.wordLengthBackwards("hola."))
+    }
+
+    @Test
+    fun `wordLengthBackwards emoji borra el grapheme completo`() {
+        assertEquals(2, Grapheme.wordLengthBackwards("hola 😀"))
+        assertEquals(3, Grapheme.wordLengthBackwards("hola 😀 "))
+    }
+
+    @Test
+    fun `wordLengthBackwards vacio`() {
+        assertEquals(0, Grapheme.wordLengthBackwards(""))
+    }
 }

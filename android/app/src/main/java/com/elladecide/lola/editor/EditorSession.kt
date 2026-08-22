@@ -64,7 +64,7 @@ class EditorSession {
     fun typeText(text: String) {
         val conn = connectionProvider() ?: return
         if (text.isEmpty()) return
-        if (text.all { it.isWordChar() }) {
+        if (Word.isWord(text)) {
             composing += text
             conn.setComposingText(composing, 1)
         } else {
@@ -118,6 +118,27 @@ class EditorSession {
             conn.deleteSurroundingText(len, 0)
             // Borrar texto committeado invalida el snapshot de undo (el cursor
             // y el buffer ya no coinciden con lo registrado).
+            undoableText = null
+        }
+    }
+
+    /**
+     * Borra la palabra completa a la izquierda del cursor (grapheme-safe, como
+     * Ctrl+Backspace). Si hay composición activa, la elimina entera.
+     */
+    fun deleteWord() {
+        val conn = connectionProvider() ?: return
+        if (composing.isNotEmpty()) {
+            composing = ""
+            conn.setComposingText("", 1)
+            conn.finishComposingText()
+            undoableText = null
+            return
+        }
+        val before = conn.getTextBeforeCursor(Grapheme.LOOKBACK, 0) ?: return
+        val len = Grapheme.wordLengthBackwards(before)
+        if (len > 0) {
+            conn.deleteSurroundingText(len, 0)
             undoableText = null
         }
     }
@@ -191,7 +212,4 @@ class EditorSession {
         conn.deleteSurroundingText(text.length, 0)
         undoableText = null
     }
-
-    /** Carácter que forma parte de una palabra (letra, dígito o apóstrofe). */
-    private fun Char.isWordChar(): Boolean = isLetterOrDigit() || this == '\''
 }

@@ -6,6 +6,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -75,11 +77,13 @@ import com.elladecide.lola.ModoResultado
 import com.elladecide.lola.Precio
 import com.elladecide.lola.data.ImageEntry
 import com.elladecide.lola.data.Product
+import com.elladecide.lola.emoji.EmojiCategory
 import com.elladecide.lola.keyboard.AutoRepeat
 import com.elladecide.lola.keyboard.KeyboardMetrics
 import com.elladecide.lola.keyboard.KeyType
 import com.elladecide.lola.keyboard.KeyboardLayer
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.abs
 import kotlin.math.floor
 
 // Paleta oscura de LOLA (coincide con la extensión: #1f2c34 / #00d4a8).
@@ -102,6 +106,16 @@ private val LolaColors = darkColorScheme(
 
 private val LONG_PRESS_MS = 400L
 private val DOBLE_TAP_MS = 300L
+
+// ── Gestos de deslizamiento (swipe-delete y cursor glide) ───────────────────
+
+private val SWIPE_THRESHOLD_DP = 40f
+private val GLIDE_SLOP_DP = 12f
+private val GLIDE_STEP_DP = 32f
+
+// Resultados del bucle de autorepeat (withTimeoutOrNull): soltar vs deslizar.
+private const val SOLTO = 1
+private const val SWIPE_LEFT = 2
 
 // ── Pantalla principal ──────────────────────────────────────────────────────
 
@@ -243,7 +257,7 @@ private fun ContenidoTeclado(
         }
 
         if (controller.capa == KeyboardLayer.EMOJI) {
-            EmojiGrid(controller, Modifier.weight(1f))
+            EmojiPanel(controller, Modifier.weight(1f))
         } else {
             if (!controller.expandida) {
                 Spacer(Modifier.weight(1f))
@@ -267,16 +281,6 @@ private fun ContenidoTeclado(
 }
 
 // ── Teclado QWERTY (render a partir del KeyEngine) ─────────────────────────
-
-private val EMOJIS: List<String> = listOf(
-    "😀", "😁", "😂", "🤣", "😊", "😍", "😘", "😜", "🤪", "🤩",
-    "🥳", "😎", "🤓", "🥺", "😢", "😭", "😡", "🤯", "😱", "😴",
-    "🤗", "🤔", "🤷", "🙃", "🥰", "😇", "🤫", "🤤", "😅", "😉",
-    "👍", "👎", "👏", "🙏", "🤝", "💪", "👌", "✌️", "🤞", "👊",
-    "❤️", "💔", "🔥", "⭐", "✨", "🎉", "🎁", "💰", "💵", "💸",
-    "🛒", "📦", "🚚", "🏷️", "✅", "❌", "⚠️", "⏰", "📅", "📍",
-    "📞", "💬", "🙂", "🙈",
-)
 
 @Composable
 private fun BarraSugerencias(controller: KeyboardController) {
@@ -331,6 +335,7 @@ private fun FilasTeclado(
                         repetir = if (tecla.type == KeyType.BACKSPACE) ({ controller.borrar() }) else null,
                         onLongPress = if (tecla.type == KeyType.SHIFT) ({ controller.fijarShift() }) else null,
                         onDoubleTap = if (tecla.type == KeyType.SHIFT) ({ controller.fijarShift() }) else null,
+                        onSwipeLeft = if (tecla.type == KeyType.BACKSPACE) ({ controller.borrarPalabra() }) else null,
                         onTap = { controller.press(tecla) },
                         metrics = metrics,
                         onPopupMostrar = onPopupMostrar,
@@ -357,7 +362,7 @@ private fun FilaInferior(controller: KeyboardController, metrics: KeyboardMetric
                 modifier = Modifier.weight(controller.peso(tecla)),
                 acento = true,
                 activo = controller.esActiva(tecla),
-                repetir = if (tecla.type == KeyType.SPACE) ({ controller.tecla(" ") }) else null,
+                onGlide = if (tecla.type == KeyType.SPACE) ({ controller.moverCursor(it) }) else null,
                 onTap = { controller.press(tecla) },
                 metrics = metrics,
             )
@@ -366,24 +371,61 @@ private fun FilaInferior(controller: KeyboardController, metrics: KeyboardMetric
 }
 
 @Composable
-private fun EmojiGrid(controller: KeyboardController, modifier: Modifier = Modifier) {
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(8),
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        items(EMOJIS) { e ->
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { controller.emoji(e) }
-                    .semantics { contentDescription = "Emoji $e" }
-                    .padding(vertical = 4.dp),
-                contentAlignment = Alignment.Center,
+private fun EmojiPanel(controller: KeyboardController, modifier: Modifier = Modifier) {
+    val engine = controller.emojiEngine
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            engine.categories().forEach { cat ->
+                val selected = engine.category == cat
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (selected) LolaAccent else Color.Transparent)
+                        .clickable { engine.selectCategory(cat) }
+                        .semantics {
+                            contentDescription = "Categoría ${cat.name.lowercase()}"
+                            if (selected) stateDescription = "Seleccionada"
+                        }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(cat.icon, fontSize = 18.sp)
+                }
+            }
+        }
+
+        val emojis = engine.emojis()
+        if (engine.category == EmojiCategory.RECENT && emojis.isEmpty()) {
+            Text(
+                text = "Sin emojis recientes",
+                color = LolaMuted,
+                modifier = Modifier.padding(12.dp),
+            )
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(8),
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text(e, fontSize = 22.sp)
+                items(emojis) { emoji ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { controller.emoji(emoji.glyph) }
+                            .semantics { contentDescription = emoji.name }
+                            .padding(vertical = 4.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(emoji.glyph, fontSize = 22.sp)
+                    }
+                }
             }
         }
     }
@@ -455,6 +497,8 @@ private fun Tecla(
     repetir: (() -> Unit)? = null,
     onLongPress: (() -> Unit)? = null,
     onDoubleTap: (() -> Unit)? = null,
+    onSwipeLeft: (() -> Unit)? = null,
+    onGlide: ((Int) -> Unit)? = null,
     onTap: () -> Unit,
     descripcion: String? = null,
     descripcionEstado: String? = null,
@@ -474,6 +518,8 @@ private fun Tecla(
     val repetirActual by rememberUpdatedState(repetir)
     val longPressActual by rememberUpdatedState(onLongPress)
     val dobleTapActual by rememberUpdatedState(onDoubleTap)
+    val swipeLeftActual by rememberUpdatedState(onSwipeLeft)
+    val glideActual by rememberUpdatedState(onGlide)
     val tapActual by rememberUpdatedState(onTap)
     val mostrarActual by rememberUpdatedState(onPopupMostrar)
     val seleccionActual by rememberUpdatedState(onPopupSeleccion)
@@ -522,23 +568,61 @@ private fun Tecla(
                         val seleccionFn = seleccionActual
                         val cerrarFn = cerrarActual
                         val altList = altActuales
+                        val swipeFn = swipeLeftActual
+                        val glideFn = glideActual
 
-                        // Autorepeat: acción inmediata + repetición acelerada.
+                        // Cursor glide (barra espaciadora): arrastrar horizontal
+                        // mueve el cursor; soltar sin arrastrar = tap (espacio).
+                        if (glideFn != null) {
+                            val downX = down.position.x
+                            val slopPx = with(density) { GLIDE_SLOP_DP.dp.toPx() }
+                            val stepPx = with(density) { GLIDE_STEP_DP.dp.toPx() }
+                            var lastStep = 0
+                            var dragged = false
+                            while (true) {
+                                val e = awaitPointerEvent()
+                                val change = e.changes.firstOrNull { it.id == down.id } ?: continue
+                                if (change.terminado()) {
+                                    if (!dragged) tapFn()
+                                    break
+                                }
+                                val dx = change.position.x - downX
+                                if (abs(dx) >= slopPx) dragged = true
+                                if (dragged) {
+                                    val steps = floor(dx / stepPx).toInt()
+                                    while (lastStep < steps) { lastStep++; glideFn(1) }
+                                    while (lastStep > steps) { lastStep--; glideFn(-1) }
+                                }
+                            }
+                            return@awaitEachGesture
+                        }
+
+                        // Autorepeat: acción inmediata + repetición acelerada,
+                        // con swipe-left para borrar la palabra completa.
                         if (repetirFn != null) {
+                            val downX = down.position.x
+                            val swipePx = with(density) { SWIPE_THRESHOLD_DP.dp.toPx() }
                             repetirFn()
                             var espera = AutoRepeat.INITIAL_DELAY_MS
                             while (true) {
-                                val solto = withTimeoutOrNull(espera) {
+                                val outcome = withTimeoutOrNull(espera) {
                                     while (true) {
                                         val e = awaitPointerEvent()
-                                        if (e.changes.firstOrNull { it.id == down.id }?.terminado() == true) {
-                                            return@withTimeoutOrNull true
+                                        val change = e.changes.firstOrNull { it.id == down.id } ?: continue
+                                        if (change.terminado()) return@withTimeoutOrNull SOLTO
+                                        if (swipeFn != null && (downX - change.position.x) >= swipePx) {
+                                            return@withTimeoutOrNull SWIPE_LEFT
                                         }
                                     }
                                 }
-                                if (solto == true) break
-                                repetirFn()
-                                espera = AutoRepeat.nextDelay(espera)
+                                when (outcome) {
+                                    SOLTO -> break
+                                    SWIPE_LEFT -> { swipeFn?.invoke(); break }
+                                    null -> {
+                                        repetirFn()
+                                        espera = AutoRepeat.nextDelay(espera)
+                                    }
+                                }
                             }
                             return@awaitEachGesture
                         }

@@ -15,6 +15,7 @@ import com.elladecide.lola.data.Product
 import com.elladecide.lola.data.SeedCatalog
 import com.elladecide.lola.data.SyncRepository
 import com.elladecide.lola.editor.EditorProfile
+import com.elladecide.lola.emoji.EmojiEngine
 import com.elladecide.lola.keyboard.Key
 import com.elladecide.lola.keyboard.KeyEffect
 import com.elladecide.lola.keyboard.KeyEngine
@@ -56,6 +57,7 @@ class KeyboardController(
     private val onReplaceComposing: (String) -> Unit,
     private val onUndo: () -> Unit,
     private val onCurrentWord: () -> String,
+    private val onDeleteWord: () -> Unit,
     private val suggestionProvider: SuggestionProvider,
 ) {
     var query by mutableStateOf("")
@@ -70,6 +72,9 @@ class KeyboardController(
 
     /** Motor del teclado base (capa + shift + resolución de teclas). */
     val keyEngine = KeyEngine()
+
+    /** Motor del panel de emojis (categorías + recientes). */
+    val emojiEngine = EmojiEngine()
 
     /** Perfil del editor activo (para la etiqueta/acción del Enter). */
     var profile by mutableStateOf(EditorProfile.EMPTY)
@@ -91,11 +96,19 @@ class KeyboardController(
 
     private var productos: List<Product> = emptyList()
     private var lastScannedUri: String? = null
+    private var appContext: Context? = null
 
     val totalEfectivo: Int get() = Precio.totales(cart, descuento).second
 
     /** Carga inicial: seed offline si está vacío + intento de sync best-effort. */
     fun cargar(db: LolaDatabase, appContext: Context) {
+        this.appContext = appContext
+        val recents = appContext.getSharedPreferences("lola", Context.MODE_PRIVATE)
+            .getString(EMOJI_RECENTS_KEY, null)
+            ?.split(RECENTS_DELIMITER)
+            ?.filter { it.isNotEmpty() }
+            ?: emptyList()
+        emojiEngine.setRecents(recents)
         scope.launch {
             val count = withContext(Dispatchers.IO) { db.productDao().count() }
             if (count == 0) {
@@ -217,6 +230,28 @@ class KeyboardController(
     fun emoji(e: String) {
         onCommitText(e)
         refreshSuggestions()
+        emojiEngine.recordRecent(e)
+        persistirRecents()
+    }
+
+    /** Borra la palabra completa a la izquierda del cursor (swipe-delete). */
+    fun borrarPalabra() {
+        onDeleteWord()
+        refreshSuggestions()
+    }
+
+    /** Mueve el cursor (cursor glide en la barra espaciadora). */
+    fun moverCursor(delta: Int) {
+        onMoveCursor(delta)
+        refreshSuggestions()
+    }
+
+    /** Persiste los emojis recientes en SharedPreferences. */
+    private fun persistirRecents() {
+        appContext?.getSharedPreferences("lola", Context.MODE_PRIVATE)
+            ?.edit()
+            ?.putString(EMOJI_RECENTS_KEY, emojiEngine.recentsList().joinToString(RECENTS_DELIMITER))
+            ?.apply()
     }
 
     // ── Teclado base (delegado al motor) ──
@@ -303,5 +338,10 @@ class KeyboardController(
             return
         }
         onCommitImageFile(entry.uri)
+    }
+
+    companion object {
+        private const val EMOJI_RECENTS_KEY = "emoji_recents"
+        private const val RECENTS_DELIMITER = ","
     }
 }

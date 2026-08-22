@@ -246,4 +246,35 @@ class EditorSessionTest {
         s.commitText("!")
         assertEquals("ho!", fake.text)
     }
+
+    @Test
+    fun `deleteWord borra la palabra completa`() {
+        val fake = FakeEditorConnection("hola mundo")
+        session(fake).deleteWord()
+        assertEquals("hola ", fake.text)
+    }
+
+    @Test
+    fun `deleteWord borra palabra y espacio previo`() {
+        val fake = FakeEditorConnection("hola mundo ")
+        session(fake).deleteWord()
+        assertEquals("hola ", fake.text)
+    }
+
+    @Test
+    fun `deleteWord con composicion la elimina`() {
+        val fake = FakeEditorConnection()
+        val s = session(fake)
+        s.typeText("h")
+        s.typeText("o")
+        s.deleteWord()
+        assertEquals("", fake.text)
+    }
+
+    @Test
+    fun `deleteWord sin texto es no-op`() {
+        val fake = FakeEditorConnection("")
+        session(fake).deleteWord()
+        assertEquals("", fake.text)
+    }
 }

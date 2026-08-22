@@ -70,6 +70,7 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
             onReplaceComposing = { session.replaceComposingText(it) },
             onUndo = { session.undo() },
             onCurrentWord = { session.currentWord() },
+            onDeleteWord = { session.deleteWord() },
             suggestionProvider = PrefixSuggestionProvider(PlaceholderWords.LIST),
         )
         controller.suggestionsEnabled = getSharedPreferences("lola", Context.MODE_PRIVATE)
