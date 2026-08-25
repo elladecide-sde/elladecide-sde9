@@ -57,9 +57,26 @@ android/
    Teclado virtual → LOLA**, y seleccionalo como teclado activo.
 5. Abrí WhatsApp (o cualquier campo de texto) → tocá el input → aparecerá LOLA.
 
-## Qué funciona hoy (fases 2 + 3 + carrito)
+## Qué funciona hoy (refactor IME F1–F6)
 
-- Buscador local (tokenizador + AND + ranking con typo) — port 1:1 de la extensión.
+- **Núcleo IME** (F1): `EditorSession` + `EditorInfoClassifier` — borrado por
+  grapheme cluster, Enter según `imeOptions`, composición y clasificación de
+  `EditorInfo` (texto/número/teléfono/email/URI/password). Unit tests JVM en
+  `app/src/test/java/.../editor/`.
+- **Teclado base** (F2): teclas data-driven, shift de 3 estados, long-press con
+  alternativas, autorepeat y navegación de cursor (incluye el **cursor glide**
+  dentro de la palabra en composición, estilo Gboard).
+- **Shell Compose** (F3): resize sin recrear el input view, métricas adaptativas,
+  haptics y animación de popup.
+- **Lenguaje** (F4): composición por palabra, barra de sugerencias (sin diccionario
+  real todavía — llega vía contrato `SuggestionProvider`) y undo de una unidad.
+  Privacidad opt-out: las sugerencias se apagan en password y si el usuario las
+  desactiva en ajustes.
+- **Emoji + gestos** (F5): panel de emojis con categorías + recientes persistidos,
+  swipe-delete (borrar palabra) y cursor glide en la barra espaciadora.
+- **Cursor dentro del composing** (F6 parcial): el cursor navega dentro de la
+  palabra en composición, tipear inserta en esa posición y borrar respeta el
+  cluster anterior al cursor.
 - **Carrito**: agregá varios productos y elegí lista (1-4 o "todas") por ítem.
 - **Descuento global** (0/10/15/20%) + oferta (sin descuento, con recargo tarjeta).
 - **Totales** tarjeta/efectivo.
@@ -74,15 +91,14 @@ android/
 
 ## Siguiente
 
-- [x] **Núcleo IME** (F1): `EditorSession` + `EditorInfoClassifier` — borrado por
-      grapheme cluster, Enter según `imeOptions`, composición y clasificación de
-      `EditorInfo` (texto/número/teléfono/email/URI/password). Unit tests JVM en
-      `app/src/test/java/.../editor/`.
+- [ ] **Emoji skin-tones + búsqueda** (diferido de F5; no depende del diccionario).
 - [ ] **Descuento MANUAL por ítem + concepto N/U + valorModo** (switches restantes
       de `buildLineParts`).
 - [ ] **Pantalla de configuración**: BASE_URL, secret, modo de imágenes.
 - [ ] **Sync real**: apuntar `SyncRepository.BASE_URL` a tu Worker y seedear D1
       (el `codigo_unico` se genera con la regla pendiente de backend/schema.sql).
+- [ ] **Neurona/diccionario**: enchufar al contrato `SuggestionProvider` cuando el
+      diccionario binario esté listo (proyecto aparte).
 
 ## Tests
 

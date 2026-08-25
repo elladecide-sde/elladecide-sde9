@@ -173,6 +173,14 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
     }
 
     private fun commitContentUri(ic: InputConnection, uri: Uri, mime: String, label: String) {
+        // Negociar MIME: si el editor no declara qué acepta, asumimos que acepta
+        // el nuestro (la mayoría no expone contentMimeTypes). Si lo declara y no
+        // nos incluye, no intentamos commitContent (evita el fallback tonto).
+        val supported = currentInputEditorInfo?.contentMimeTypes
+        if (supported != null && supported.none { it.equals(mime, ignoreCase = true) }) {
+            clipboardFallback(uri, label)
+            return
+        }
         val desc = ClipDescription(label, arrayOf(mime))
         val info = InputContentInfo(uri, desc, null)
         val ok = try {
@@ -181,15 +189,21 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
             false
         }
         if (!ok) {
-            val clip = ClipData.newUri(contentResolver, label, uri)
-            (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
-            controller.estado = "Imagen copiada — pegala con mantener apretado → Pegar"
+            clipboardFallback(uri, label)
         }
+    }
+
+    /** Fallback explícito: copia al portapapeles y avisa al usuario. */
+    private fun clipboardFallback(uri: Uri, label: String) {
+        val clip = ClipData.newUri(contentResolver, label, uri)
+        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+        controller.estado = "Imagen copiada — pegala con mantener apretado → Pegar"
     }
 
     private fun saveToCache(bitmap: Bitmap, format: Bitmap.CompressFormat, ext: String): Uri? {
         return try {
             val dir = File(cacheDir, "precios").apply { mkdirs() }
+            pruneCache(dir)
             val file = File(dir, "img_${System.currentTimeMillis()}.$ext")
             file.outputStream().use { out -> bitmap.compress(format, 100, out) }
             FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
@@ -201,6 +215,7 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
     private fun copyToCache(source: Uri, ext: String): Uri? {
         return try {
             val dir = File(cacheDir, "precios").apply { mkdirs() }
+            pruneCache(dir)
             val file = File(dir, "img_${System.currentTimeMillis()}.$ext")
             contentResolver.openInputStream(source)?.use { input ->
                 file.outputStream().use { input.copyTo(it) }
@@ -209,5 +224,19 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
         } catch (e: Exception) {
             null
         }
+    }
+
+    /**
+     * Limpia la carpeta de cache de imágenes generadas: borra los archivos con
+     * más de 24h (el contenido ya fue committeado o copiado al portapapeles, así
+     * que no se vuelven a necesitar). Evita que el cache crezca sin límite.
+     */
+    private fun pruneCache(dir: File) {
+        val cutoff = System.currentTimeMillis() - CACHE_TTL_MS
+        dir.listFiles()?.forEach { if (it.lastModified() < cutoff) it.delete() }
+    }
+
+    private companion object {
+        const val CACHE_TTL_MS = 24L * 60 * 60 * 1000
     }
 }
