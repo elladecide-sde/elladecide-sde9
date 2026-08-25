@@ -51,9 +51,15 @@ npx wrangler d1 create lola-db
 npm run db:init:local     # dev (SQLite local)
 npm run db:init           # producción
 
-# 3) Secret de admin
-#    Local: creá backend/.dev.vars con  ADMIN_SECRET=devsecret
-#    Producción: npx wrangler secret put ADMIN_SECRET
+# 3) Secrets de admin (JWT)
+#    Local: creá backend/.dev.vars con
+#      ADMIN_USER=admin
+#      ADMIN_PASSWORD=devpass
+#      JWT_SECRET=devsecret
+#    Producción:
+#      npx wrangler secret put ADMIN_USER
+#      npx wrangler secret put ADMIN_PASSWORD
+#      npx wrangler secret put JWT_SECRET
 ```
 
 ## Correr
@@ -75,16 +81,25 @@ npm run deploy   # producción
 `products[]` = `{ codigo_unico, nombre, precios: [L1, L2, L3, L4] }` (solo los tocados desde `N`).
 `deleted[]` = lista de `codigo_unico` borrados desde `N`.
 
-### Admin (header `X-Admin-Secret: <secret>`)
+### Admin (autenticación JWT)
+
+La administración usa **JWT HS256** (ver `src/auth.ts`):
+
+1. `POST /api/v1/auth/login { username, password }` → `{ token, expires_in }` (24h).
+2. Mandá `Authorization: Bearer <token>` en cada request admin.
 
 | Método | Ruta | Body | Efecto |
 | --- | --- | --- | --- |
+| POST | `/api/v1/auth/login` | `{ username, password }` | token JWT |
+| POST | `/api/v1/auth/change-password` | `{ current_password, new_password }` | re-hashea la contraseña en D1 |
 | POST | `/api/v1/admin/products` | 1 producto, array, o `{ products: [] }` | upsert + bump + hash |
 | DELETE | `/api/v1/admin/products/:codigo_unico` | — | tombstone + bump + hash |
 | POST | `/api/v1/admin/rehash` | — | recalcula hash (tras editar D1 a mano) |
 
-**Seguridad:** la administración es **fail-closed**. Si `ADMIN_SECRET` no está
-configurado, NADIE puede administrar (devuelve 401). No hay modo "abierto".
+**Seguridad:** la administración es **fail-closed**. Si `JWT_SECRET` no está
+configurado, NADIE puede administrar (devuelve 401/503). No hay modo "abierto".
+La contraseña se verifica contra `auth.password_hash` (PBKDF2 + salt) si ya se
+cambió; si no, contra el secret `ADMIN_PASSWORD`.
 
 ## Flujo de sincronización (cliente)
 

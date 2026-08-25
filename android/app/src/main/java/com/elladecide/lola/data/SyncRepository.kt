@@ -3,7 +3,9 @@ package com.elladecide.lola.data
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -18,6 +20,10 @@ import java.net.URL
  * BASE_URL: en el emulador, 10.0.2.2 apunta al localhost de la máquina.
  * En un dispositivo real o producción, poner la URL del Worker desplegado.
  * TODO: mover BASE_URL a una pantalla de configuración (settings activity).
+ *
+ * Errores: [SyncNetworkException] = backend inalcanzable/offline (esperable,
+ * no es un bug); [SyncProtocolException] = el backend respondió mal (HTTP no
+ * 2xx o JSON inválido) → indica un bug de contrato, NO debe silenciarse.
  */
 class SyncRepository(
     private val productDao: ProductDao,
@@ -59,8 +65,19 @@ class SyncRepository(
             conn.connectTimeout = 5000
             conn.readTimeout = 5000
             conn.setRequestProperty("Accept", "application/json")
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                throw SyncProtocolException("HTTP $code en $path")
+            }
             val body = conn.inputStream.bufferedReader().use { it.readText() }
-            return JSONObject(body)
+            return try {
+                JSONObject(body)
+            } catch (e: JSONException) {
+                throw SyncProtocolException("JSON inválido en $path: ${e.message}")
+            }
+        } catch (e: IOException) {
+            // red/offline: esperable, no es un bug del contrato
+            throw SyncNetworkException(e)
         } finally {
             conn.disconnect()
         }
@@ -83,3 +100,9 @@ class SyncRepository(
         const val BASE_URL = "http://10.0.2.2:8787"
     }
 }
+
+/** Backend inalcanzable (offline, DNS, timeout, conexión rechazada). */
+class SyncNetworkException(cause: Throwable) : Exception(cause)
+
+/** El backend respondió, pero mal (HTTP no 2xx o cuerpo inválido). */
+class SyncProtocolException(message: String) : Exception(message)

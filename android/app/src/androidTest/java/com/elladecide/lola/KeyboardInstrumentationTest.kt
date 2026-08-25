@@ -29,15 +29,23 @@ class KeyboardInstrumentationTest {
     @get:Rule
     val rule = createComposeRule()
 
-    private fun controller(onCommit: (String) -> Unit = {}): KeyboardController =
+    private fun controller(onType: (String) -> Unit = {}): KeyboardController =
         KeyboardController(
             scope = CoroutineScope(Dispatchers.Main),
-            onCommitText = onCommit,
+            onCommitText = {},
             onCommitImage = {},
             onCommitImageFile = {},
             onDelete = {},
             onEnter = {},
             onMoveCursor = {},
+            onTypeText = onType,
+            onReplaceComposing = {},
+            onUndo = {},
+            onCurrentWord = { "" },
+            onDeleteWord = {},
+            suggestionProvider = com.elladecide.lola.language.PrefixSuggestionProvider(
+                com.elladecide.lola.language.PlaceholderWords.LIST,
+            ),
         )
 
     @Test
@@ -49,11 +57,13 @@ class KeyboardInstrumentationTest {
     }
 
     @Test
-    fun tappingAKeyCommitsItsCharacter() {
-        var committed = ""
-        rule.setContent { KeyboardScreen(controller { committed += it }) }
+    fun tappingAKeyFeedsComposing() {
+        // F4: una letra en modo contraído acumula en composing (para sugerir),
+        // no se commitea directo. El tap debe llegar a onTypeText.
+        var typed = ""
+        rule.setContent { KeyboardScreen(controller { typed += it }) }
         rule.onNodeWithContentDescription("a").performClick()
-        assertEquals("a", committed)
+        assertEquals("a", typed)
     }
 
     @Test

@@ -44,7 +44,11 @@ class ImeRootView(
     }
 
     /**
-     * Fija la altura del contenedor en [alturaPx].
+     * Fija la altura del contenedor en [alturaPx], SIN superar el alto que el
+     * sistema realmente ofrece (el spec de medida). Así el teclado no desborda
+     * en landscape ni en pantallas chicas: el alto pedido se recorta al máximo
+     * disponible, y el `KeyboardScreen` (que ya mide `maxHeight` del viewport)
+     * recalcula las teclas para entrar en lo que haya.
      *
      * `InputMethodService` agrega el input view al `mInputFrame` con
      * `WRAP_CONTENT`, descartando el `layoutParams.height` que le asignamos en
@@ -54,9 +58,14 @@ class ImeRootView(
      * tamaño real del teclado y la ventana del IME se dimensiona en consecuencia.
      */
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val heightSpec = View.MeasureSpec.makeMeasureSpec(alturaPx, View.MeasureSpec.EXACTLY)
+        val disponible = View.MeasureSpec.getSize(heightMeasureSpec)
+        val efectiva = when (View.MeasureSpec.getMode(heightMeasureSpec)) {
+            View.MeasureSpec.UNSPECIFIED -> alturaPx
+            else -> minOf(alturaPx, disponible)
+        }
+        val heightSpec = View.MeasureSpec.makeMeasureSpec(efectiva, View.MeasureSpec.EXACTLY)
         super.onMeasure(widthMeasureSpec, heightSpec)
-        setMeasuredDimension(measuredWidth, alturaPx)
+        setMeasuredDimension(measuredWidth, efectiva)
     }
 
     override fun onAttachedToWindow() {

@@ -13,6 +13,8 @@ import com.elladecide.lola.data.ImageRepository
 import com.elladecide.lola.data.LolaDatabase
 import com.elladecide.lola.data.Product
 import com.elladecide.lola.data.SeedCatalog
+import com.elladecide.lola.data.SyncNetworkException
+import com.elladecide.lola.data.SyncProtocolException
 import com.elladecide.lola.data.SyncRepository
 import com.elladecide.lola.editor.EditorProfile
 import com.elladecide.lola.emoji.EmojiEngine
@@ -116,7 +118,11 @@ class KeyboardController(
             }
             try {
                 SyncRepository(db.productDao(), db.syncMetaDao()).sync()
-            } catch (e: Exception) {
+            } catch (e: SyncProtocolException) {
+                // El backend respondió mal (HTTP no 2xx o JSON inválido): es un
+                // bug de contrato, NO se silencia. Se expone para que se vea.
+                estado = "Sync falló: ${e.message}"
+            } catch (e: SyncNetworkException) {
                 // sin backend alcanzable → catálogo local (offline-first)
             }
             productos = withContext(Dispatchers.IO) { db.productDao().getAll() }
