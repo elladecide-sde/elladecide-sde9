@@ -227,14 +227,95 @@ class EditorSessionTest {
     }
 
     @Test
-    fun `mover cursor con composicion la commitea antes`() {
+    fun `mover cursor izquierda dentro del composing lo mantiene en composicion`() {
         val fake = FakeEditorConnection()
         val s = session(fake)
         s.typeText("h")
         s.typeText("o")
+        s.typeText("l")
+        s.typeText("a")
         s.moveCursor(-1)
+        assertEquals("hola", fake.text)
+        assertEquals(3, fake.cursorPos)
+        assertEquals("hola", s.currentWord())
+    }
+
+    @Test
+    fun `mover cursor derecha dentro del composing restaura la posicion`() {
+        val fake = FakeEditorConnection()
+        val s = session(fake)
+        s.typeText("hola")
+        s.moveCursor(-1)
+        s.moveCursor(-1)
+        assertEquals(2, fake.cursorPos)
+        s.moveCursor(1)
+        assertEquals(3, fake.cursorPos)
+        assertEquals("hola", s.currentWord())
+    }
+
+    @Test
+    fun `mover izquierda en el inicio del composing lo commitea y sigue`() {
+        val fake = FakeEditorConnection()
+        val s = session(fake)
+        s.typeText("ho")
+        s.moveCursor(-1)
+        s.moveCursor(-1) // cursor al inicio del composing (0)
+        assertEquals("ho", s.currentWord())
+        s.moveCursor(-1) // sale del composing → lo commitea
         assertEquals("ho", fake.text)
-        assertEquals(1, fake.cursorPos)
+        assertEquals("", s.currentWord())
+        assertEquals(0, fake.cursorPos)
+    }
+
+    @Test
+    fun `mover derecha en el final del composing lo commitea y sigue`() {
+        val fake = FakeEditorConnection("hola ")
+        val s = session(fake)
+        s.typeText("mundo")
+        s.moveCursor(-1)
+        assertEquals(9, fake.cursorPos)
+        s.moveCursor(1) // al final del composing
+        assertEquals("mundo", s.currentWord())
+        s.moveCursor(1) // sale del composing
+        assertEquals("hola mundo", fake.text)
+        assertEquals("", s.currentWord())
+        assertEquals(10, fake.cursorPos)
+    }
+
+    @Test
+    fun `typeText inserta dentro del composing en la posicion del cursor`() {
+        val fake = FakeEditorConnection()
+        val s = session(fake)
+        s.typeText("hola")
+        s.moveCursor(-1) // cursor entre "hol" y "a"
+        s.typeText("e")
+        assertEquals("holea", fake.text)
+        assertEquals(4, fake.cursorPos)
+        assertEquals("holea", s.currentWord())
+    }
+
+    @Test
+    fun `deleteBackwards borra el cluster antes del cursor dentro del composing`() {
+        val fake = FakeEditorConnection()
+        val s = session(fake)
+        s.typeText("hola")
+        s.moveCursor(-1) // cursor entre "hol" y "a"
+        s.deleteBackwards() // borra "l"
+        assertEquals("hoa", fake.text)
+        assertEquals(2, fake.cursorPos)
+        assertEquals("hoa", s.currentWord())
+    }
+
+    @Test
+    fun `deleteBackwards al inicio del composing borra el texto committeado previo`() {
+        val fake = FakeEditorConnection("pre ")
+        val s = session(fake)
+        s.typeText("hola")
+        repeat(4) { s.moveCursor(-1) } // cursor al inicio del composing
+        s.deleteBackwards() // commitea "hola" y borra el espacio previo
+        assertEquals("prehola", fake.text)
+        assertEquals(3, fake.cursorPos)
+        assertEquals("", s.currentWord())
     }
 
     @Test

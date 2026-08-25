@@ -108,7 +108,7 @@ class KeyboardController(
             ?.split(RECENTS_DELIMITER)
             ?.filter { it.isNotEmpty() }
             ?: emptyList()
-        emojiEngine.setRecents(recents)
+        emojiEngine.restoreRecents(recents)
         scope.launch {
             val count = withContext(Dispatchers.IO) { db.productDao().count() }
             if (count == 0) {

@@ -43,7 +43,7 @@ class EmojiEngineTest {
     @Test
     fun `recientes se resuelven a emojis del catalogo`() {
         val e = EmojiEngine()
-        e.setRecents(listOf("😀", "🔥"))
+        e.restoreRecents(listOf("😀", "🔥"))
         e.selectCategory(EmojiCategory.RECENT)
         assertEquals(listOf("😀", "🔥"), e.emojis().map { it.glyph })
     }

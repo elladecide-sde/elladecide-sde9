@@ -22,6 +22,13 @@ class EditorSession {
 
     private var composing = ""
 
+    /**
+     * Posición del cursor dentro del composing (offset en unidades UTF-16, en
+     * `0..composing.length`). Permite navegar por el interior de la palabra en
+     * composición sin commitearla, como hace Gboard.
+     */
+    private var composingCursor = 0
+
     /** Último texto committeado por el tipeo (palabra + separador), objetivo del undo. */
     private var undoableText: String? = null
 
@@ -30,6 +37,7 @@ class EditorSession {
         connectionProvider = provider
         profile = EditorInfoClassifier.classify(inputType, imeOptions)
         composing = ""
+        composingCursor = 0
         undoableText = null
     }
 
@@ -37,6 +45,7 @@ class EditorSession {
         connectionProvider = { null }
         profile = EditorProfile.EMPTY
         composing = ""
+        composingCursor = 0
         undoableText = null
     }
 
@@ -50,6 +59,7 @@ class EditorSession {
         if (composing.isNotEmpty()) {
             conn.finishComposingText()
             composing = ""
+            composingCursor = 0
         }
         conn.commitText(text, 1)
         undoableText = null
@@ -59,19 +69,22 @@ class EditorSession {
      * Tipeo con límite de palabra: las letras/dígitos/apóstrofe se acumulan en
      * composición (para predecir y reemplazar); el espacio/puntuación finaliza
      * la palabra en composición y commitea el separador. La unidad de undo queda
-     * como "palabra + separador" para que deshacer la deje completa.
+     * como "palabra + separador" para que deshacer la deje completa. Si el
+     * cursor está dentro del composing, la letra se inserta en esa posición.
      */
     fun typeText(text: String) {
         val conn = connectionProvider() ?: return
         if (text.isEmpty()) return
         if (Word.isWord(text)) {
-            composing += text
-            conn.setComposingText(composing, 1)
+            val at = composingCursor.coerceIn(0, composing.length)
+            val merged = composing.substring(0, at) + text + composing.substring(at)
+            updateComposing(merged, at + text.length)
         } else {
             val word = composing
             if (word.isNotEmpty()) {
                 conn.finishComposingText()
                 composing = ""
+                composingCursor = 0
             }
             conn.commitText(text, 1)
             undoableText = word + text
@@ -82,6 +95,7 @@ class EditorSession {
     fun replaceComposingText(text: String) {
         val conn = connectionProvider() ?: return
         composing = text
+        composingCursor = text.length
         conn.setComposingText(text, 1)
     }
 
@@ -91,25 +105,38 @@ class EditorSession {
     fun setComposingText(text: String) {
         connectionProvider()?.setComposingText(text, 1)
         composing = text
+        composingCursor = text.length
     }
 
     fun finishComposing() {
         connectionProvider()?.finishComposingText()
         composing = ""
+        composingCursor = 0
     }
 
     /**
      * Borra hacia atrás un grapheme completo. Si hay composición activa, borra
-     * dentro de ella; al vaciarla, la finaliza. Si no, lee el contexto antes del
-     * cursor y borra exactamente el último cluster.
+     * el cluster anterior a la posición del cursor (no necesariamente el
+     * último); al vaciarla, la finaliza. Con el cursor al inicio del composing,
+     * lo finaliza y borra el texto committeado previo. Si no, lee el contexto
+     * antes del cursor y borra exactamente el último cluster.
      */
     fun deleteBackwards() {
         val conn = connectionProvider() ?: return
         if (composing.isNotEmpty()) {
-            val shortened = Grapheme.removeLastCluster(composing)
-            conn.setComposingText(shortened, 1)
-            composing = shortened
-            if (shortened.isEmpty()) conn.finishComposingText()
+            if (composingCursor > 0) {
+                val head = composing.substring(0, composingCursor)
+                val del = Grapheme.lastClusterLength(head)
+                updateComposing(
+                    composing.substring(0, composingCursor - del) + composing.substring(composingCursor),
+                    composingCursor - del,
+                )
+            } else {
+                conn.finishComposingText()
+                composing = ""
+                composingCursor = 0
+                deleteBackwards()
+            }
             return
         }
         val before = conn.getTextBeforeCursor(Grapheme.LOOKBACK, 0) ?: return
@@ -130,6 +157,7 @@ class EditorSession {
         val conn = connectionProvider() ?: return
         if (composing.isNotEmpty()) {
             composing = ""
+            composingCursor = 0
             conn.setComposingText("", 1)
             conn.finishComposingText()
             undoableText = null
@@ -145,18 +173,36 @@ class EditorSession {
 
     /**
      * Mueve el cursor un grapheme hacia la izquierda (delta negativo) o la
-     * derecha (delta positivo). Se calcula la posición leyendo el contexto
-     * antes/después del cursor (ventana [Grapheme.LOOKBACK]) y se fija con
-     * `setSelection` colapsando cualquier selección previa.
+     * derecha (delta positivo). Con composición activa navega DENTRO del
+     * composing (manteniéndola, estilo Gboard): el cursor se reposiciona sobre
+     * la palabra en composición y las sugerencias siguen aplicándose al texto
+     * completo. Al llegar al borde del composing, lo finaliza (commitea) y
+     * continúa sobre el texto ya committeado.
      */
     fun moveCursor(delta: Int) {
         val conn = connectionProvider() ?: return
-        // Con composición activa, el cursor "lógico" vive dentro del composing;
-        // se finaliza la palabra (se commitea) para que la navegación opere
-        // sobre texto committeado y el setSelection quede consistente.
         if (composing.isNotEmpty()) {
-            conn.finishComposingText()
-            composing = ""
+            when {
+                delta < 0 && composingCursor > 0 -> {
+                    val step = Grapheme.lastClusterLength(composing.substring(0, composingCursor))
+                    updateComposing(composing, composingCursor - step)
+                }
+                delta > 0 && composingCursor < composing.length -> {
+                    val step = Grapheme.firstClusterLength(composing.substring(composingCursor))
+                    updateComposing(composing, composingCursor + step)
+                }
+                else -> {
+                    // Borde del composing: se finaliza (se commitea) para que la
+                    // navegación siga sobre texto committeado y el setSelection
+                    // quede consistente.
+                    conn.finishComposingText()
+                    composing = ""
+                    composingCursor = 0
+                    undoableText = null
+                    moveCursor(delta)
+                }
+            }
+            return
         }
         // Mover el cursor invalida el snapshot de undo (el cursor ya no está
         // justo después de la última palabra committeada).
@@ -183,6 +229,7 @@ class EditorSession {
         if (composing.isNotEmpty()) {
             conn.finishComposingText()
             composing = ""
+            composingCursor = 0
         }
         undoableText = null
         when (val decision = profile.enterDecision) {
@@ -204,6 +251,7 @@ class EditorSession {
         val conn = connectionProvider() ?: return
         if (composing.isNotEmpty()) {
             composing = ""
+            composingCursor = 0
             conn.setComposingText("", 1)
             conn.finishComposingText()
             return
@@ -211,5 +259,28 @@ class EditorSession {
         val text = undoableText ?: return
         conn.deleteSurroundingText(text.length, 0)
         undoableText = null
+    }
+
+    /**
+     * Actualiza el texto en composición y posiciona el cursor en [cursorWithin]
+     * (offset en unidades UTF-16 dentro del composing). `newCursorPosition` de
+     * `setComposingText` solo posiciona en el inicio (0) o el final (1) del
+     * texto, así que para un cursor interior se reenvía el composing con el
+     * cursor al final y se fija la selección absoluta (el inicio del composing
+     * se deriva del texto antes del cursor menos el largo del composing).
+     */
+    private fun updateComposing(text: String, cursorWithin: Int) {
+        val conn = connectionProvider() ?: return
+        composing = text
+        composingCursor = cursorWithin
+        if (text.isEmpty()) {
+            conn.setComposingText("", 1)
+            conn.finishComposingText()
+            return
+        }
+        conn.setComposingText(text, 1)
+        val before = conn.getTextBeforeCursor(Grapheme.LOOKBACK, 0)?.length ?: return
+        val start = (before - text.length).coerceAtLeast(0)
+        conn.setSelection(start + cursorWithin, start + cursorWithin)
     }
 }

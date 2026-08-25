@@ -35,7 +35,7 @@ class EmojiEngine {
     }
 
     /** Inicializa los recientes persistidos (más reciente primero). */
-    fun setRecents(list: List<String>) {
+    fun restoreRecents(list: List<String>) {
         recents = list.distinct().take(MAX_RECENTS)
     }
 
