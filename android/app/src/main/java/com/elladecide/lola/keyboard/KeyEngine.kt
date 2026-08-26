@@ -27,7 +27,7 @@ sealed interface KeyEffect {
  * [layer] y [shift] son snapshot state (`mutableStateOf`) para que Compose
  * recomponga al cambiar de capa/estado; la lógica (labels, pesos, transiciones)
  * sigue siendo pura y determinista. La UI renderiza a partir de
- * [layout]/[bottomRow]/[numberRow] y consume [press].
+ * [layout]/[bottomRow] y consume [press].
  */
 class KeyEngine {
 
@@ -39,28 +39,26 @@ class KeyEngine {
 
     val shiftActive: Boolean get() = shift.isActive
 
-    /** Body de la capa actual (letras, símbolos o auxiliar). */
+    /** Body de la capa actual (letras, símbolos o navegación). */
     fun layout(): List<List<Key>> = when (layer) {
         KeyboardLayer.LETTERS -> Layouts.LETTERS
         KeyboardLayer.SYMBOLS -> Layouts.SYMBOLS
-        KeyboardLayer.AUX -> Layouts.AUX
+        KeyboardLayer.CURSOR -> Layouts.CURSOR
         KeyboardLayer.EMOJI -> Layouts.LETTERS
     }
 
-    /** Fila numérica permanente (solo en la capa de letras). */
-    fun numberRow(): List<Key> = when (layer) {
-        KeyboardLayer.LETTERS -> Layouts.NUMBER_ROW
-        else -> emptyList()
-    }
-
-    /** Fila inferior del teclado principal (coma · espacio · punto · enter). */
+    /** Fila inferior compartida (123 · coma · emoji · espacio · punto · enter). */
     fun bottomRow(): List<Key> = Layouts.BOTTOM_ROW
 
-    /** Alternativas de long-press para una tecla, respetando shift. */
+    /** Alternativas de long-press según la capa, respetando shift en letras. */
     fun alternatives(key: Key): List<String> {
-        if (layer != KeyboardLayer.LETTERS || key.type != KeyType.CHAR) return emptyList()
-        val base = Layouts.ALTERNATIVES[key.char?.lowercase()] ?: return emptyList()
-        return if (shiftActive) base.map { it.uppercase() } else base
+        if (key.type != KeyType.CHAR) return emptyList()
+        val base = when (layer) {
+            KeyboardLayer.LETTERS -> Layouts.ALTERNATIVES[key.char?.lowercase()] ?: return emptyList()
+            KeyboardLayer.SYMBOLS -> Layouts.SYMBOL_ALTERNATIVES[key.char] ?: return emptyList()
+            else -> return emptyList()
+        }
+        return if (shiftActive && layer == KeyboardLayer.LETTERS) base.map { it.uppercase() } else base
     }
 
     /** Etiqueta visible de la tecla (el Enter refleja la acción del editor). */
@@ -81,34 +79,34 @@ class KeyEngine {
         KeyType.UNDO -> "↶"
         KeyType.COMMA -> ","
         KeyType.DOT -> "."
-        KeyType.TOOLS -> "≡"
+        KeyType.CURSOR -> "◀▶"
         KeyType.BACK -> "ABC"
     }
 
-    /** Peso relativo de la tecla en su fila. */
+    /** Peso relativo de la tecla en su fila (el espacio domina la fila inferior). */
     fun weight(key: Key): Float = when (key.type) {
         KeyType.CHAR -> 1f
         KeyType.SHIFT, KeyType.BACKSPACE -> 1.5f
         KeyType.SPACE -> 4f
         KeyType.ENTER -> 2f
-        KeyType.LAYER, KeyType.EMOJI, KeyType.LOLA, KeyType.TOOLS -> 1.5f
+        KeyType.LAYER, KeyType.EMOJI, KeyType.LOLA, KeyType.CURSOR -> 1.5f
         KeyType.LEFT, KeyType.RIGHT, KeyType.UNDO -> 1f
         KeyType.COMMA, KeyType.DOT -> 1.5f
         KeyType.BACK -> 2f
     }
 
-    /** Resalta la tecla (shift activo, capa emoji). */
+    /** Resalta la tecla (shift activo, capa emoji, capa cursor). */
     fun isActive(key: Key): Boolean = when (key.type) {
         KeyType.SHIFT -> shiftActive
         KeyType.EMOJI -> layer == KeyboardLayer.EMOJI
-        KeyType.TOOLS -> layer == KeyboardLayer.AUX
+        KeyType.LAYER -> layer == KeyboardLayer.SYMBOLS
+        KeyType.CURSOR -> layer == KeyboardLayer.CURSOR
         else -> false
     }
 
     /**
      * Descripción legible de la tecla para accesibilidad (TalkBack). A
-     * diferencia de [label], usa el nombre de la acción, no el glifo visual
-     * ("Retroceso" en vez de "⌫").
+     * diferencia de [label], usa el nombre de la acción, no el glifo visual.
      */
     fun contentDescription(key: Key, profile: EditorProfile): String = when (key.type) {
         KeyType.CHAR -> key.char ?: ""
@@ -124,7 +122,7 @@ class KeyEngine {
         KeyType.UNDO -> "Deshacer"
         KeyType.COMMA -> "Coma"
         KeyType.DOT -> "Punto"
-        KeyType.TOOLS -> "Herramientas"
+        KeyType.CURSOR -> "Teclado de cursor"
         KeyType.BACK -> "Volver al teclado de letras"
     }
 
@@ -134,7 +132,7 @@ class KeyEngine {
         key.type == KeyType.SHIFT && shift == ShiftState.MAYUSCULA -> "Mayúscula para una letra"
         key.type == KeyType.EMOJI && layer == KeyboardLayer.EMOJI -> "Teclado de emojis activo"
         key.type == KeyType.LAYER && layer == KeyboardLayer.SYMBOLS -> "Teclado de símbolos activo"
-        key.type == KeyType.TOOLS && layer == KeyboardLayer.AUX -> "Herramientas activas"
+        key.type == KeyType.CURSOR && layer == KeyboardLayer.CURSOR -> "Teclado de cursor activo"
         else -> null
     }
 
@@ -195,8 +193,8 @@ class KeyEngine {
         KeyType.UNDO -> KeyEffect.Undo
         KeyType.COMMA -> KeyEffect.Commit(",")
         KeyType.DOT -> KeyEffect.Commit(".")
-        KeyType.TOOLS -> {
-            layer = if (layer == KeyboardLayer.AUX) KeyboardLayer.LETTERS else KeyboardLayer.AUX
+        KeyType.CURSOR -> {
+            layer = if (layer == KeyboardLayer.CURSOR) KeyboardLayer.LETTERS else KeyboardLayer.CURSOR
             null
         }
         KeyType.BACK -> {

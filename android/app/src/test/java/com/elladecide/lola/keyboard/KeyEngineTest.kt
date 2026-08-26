@@ -3,6 +3,7 @@ package com.elladecide.lola.keyboard
 import com.elladecide.lola.editor.EditorAction
 import com.elladecide.lola.editor.EditorProfile
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -31,40 +32,43 @@ class KeyEngineTest {
     }
 
     @Test
-    fun `fila inferior contiene coma espacio punto y enter`() {
+    fun `fila inferior sigue la estructura 123 coma emoji espacio punto enter`() {
         assertEquals(
-            listOf(KeyType.COMMA, KeyType.SPACE, KeyType.DOT, KeyType.ENTER),
+            listOf(KeyType.LAYER, KeyType.COMMA, KeyType.EMOJI, KeyType.SPACE, KeyType.DOT, KeyType.ENTER),
             Layouts.BOTTOM_ROW.map { it.type },
         )
     }
 
     @Test
-    fun `fila numerica tiene los diez digitos`() {
-        assertEquals("1234567890".map { it.toString() }, Layouts.NUMBER_ROW.map { it.char })
+    fun `el espacio domina la fila inferior`() {
+        val e = KeyEngine()
+        assertTrue(e.weight(Key.SPACE) > e.weight(Key.COMMA))
+        assertTrue(e.weight(Key.SPACE) > e.weight(Key.DOT))
+        assertTrue(e.weight(Key.SPACE) > e.weight(Key.LAYER))
     }
 
     @Test
-    fun `aux conserva los controles auxiliares`() {
-        val types = Layouts.AUX.flatten().map { it.type }
+    fun `cursor conserva los controles de navegacion`() {
+        val types = Layouts.CURSOR.flatten().map { it.type }
         listOf(KeyType.UNDO, KeyType.LEFT, KeyType.RIGHT, KeyType.BACK, KeyType.EMOJI, KeyType.LOLA)
-            .forEach { assertTrue("falta $it en AUX", it in types) }
+            .forEach { assertTrue("falta $it en CURSOR", it in types) }
     }
 
     @Test
-    fun `tools alterna la capa auxiliar y la resalta`() {
+    fun `cursor alterna la capa y la resalta`() {
         val e = KeyEngine()
         assertEquals(KeyboardLayer.LETTERS, e.layer)
-        e.press(Key.TOOLS)
-        assertEquals(KeyboardLayer.AUX, e.layer)
-        assertTrue(e.isActive(Key.TOOLS))
-        e.press(Key.TOOLS)
+        e.press(Key.CURSOR)
+        assertEquals(KeyboardLayer.CURSOR, e.layer)
+        assertTrue(e.isActive(Key.CURSOR))
+        e.press(Key.CURSOR)
         assertEquals(KeyboardLayer.LETTERS, e.layer)
     }
 
     @Test
-    fun `back vuelve a letras desde aux`() {
+    fun `back vuelve a letras desde cursor`() {
         val e = KeyEngine()
-        e.press(Key.TOOLS)
+        e.press(Key.CURSOR)
         e.press(Key.BACK)
         assertEquals(KeyboardLayer.LETTERS, e.layer)
         assertEquals("ABC", e.label(Key.BACK, EditorProfile.EMPTY))
@@ -191,6 +195,44 @@ class KeyEngineTest {
         assertTrue("á" in e.alternatives(Key.char("a")))
         e.lockShift()
         assertTrue("Á" in e.alternatives(Key.char("a")))
+    }
+
+    @Test
+    fun `alternativas completas de letras n y vocales`() {
+        val e = KeyEngine()
+        assertTrue("ñ" in e.alternatives(Key.char("n")))
+        assertTrue("é" in e.alternatives(Key.char("e")))
+        assertTrue("ú" in e.alternatives(Key.char("u")))
+        assertTrue("í" in e.alternatives(Key.char("i")))
+        assertTrue("ó" in e.alternatives(Key.char("o")))
+    }
+
+    @Test
+    fun `numeros accesibles por long press en la fila superior`() {
+        val e = KeyEngine()
+        assertTrue("1" in e.alternatives(Key.char("q")))
+        assertTrue("9" in e.alternatives(Key.char("o")))
+        assertTrue("0" in e.alternatives(Key.char("p")))
+    }
+
+    @Test
+    fun `alternativas de simbolos cubren interrogacion exclamacion coma y punto`() {
+        val e = KeyEngine()
+        e.press(Key.LAYER) // SYMBOLS
+        assertTrue("¿" in e.alternatives(Key.char("?")))
+        assertTrue("¡" in e.alternatives(Key.char("!")))
+        assertTrue("…" in e.alternatives(Key.char(".")))
+        assertTrue("“" in e.alternatives(Key.char("\"")))
+    }
+
+    @Test
+    fun `alternativas en simbolos respetan shift no mayusculas`() {
+        val e = KeyEngine()
+        e.press(Key.LAYER)
+        e.lockShift()
+        val opts = e.alternatives(Key.char("?"))
+        assertTrue("¿" in opts)
+        assertFalse(opts.any { it != it.lowercase() })
     }
 
     @Test

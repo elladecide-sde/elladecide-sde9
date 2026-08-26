@@ -5,11 +5,10 @@ package com.elladecide.lola.keyboard
  * calculan a partir de la altura disponible y del `fontScale` para que el
  * teclado no desborde en pantallas chicas ni en landscape.
  *
- * Estructura vertical (spec F3):
+ * Estructura vertical (spec F3 corregida):
  *   STRIP (toolbar o sugerencias — geometría estable, una u otra)
- *   NUMBER_ROW (solo capa de letras)
  *   body (filas de teclas)
- *   BOTTOM_ROW (coma · espacio · punto · enter)
+ *   BOTTOM_ROW (123 · coma · emoji · espacio · punto · enter)
  *
  * Toda la geometría del shell (alto de tecla, espaciados, popup, tamaño de
  * etiqueta) se deriva acá en vez de hardcodearse en los Composable, de modo
@@ -31,8 +30,9 @@ data class KeyboardMetrics(
         const val SCREEN_PADDING_DP = 8f
         const val POPUP_CELL_DP = 48f
         const val POPUP_HEIGHT_DP = 56f
-        const val STRIP_HEIGHT_DP = 36f
-        const val NUMBER_ROW_HEIGHT_DP = 40f
+
+        /** Cinta superior: toolbar o sugerencias (geometría estable). */
+        const val STRIP_HEIGHT_DP = 44f
 
         /** Filas de letras/símbolos + fila inferior. */
         const val KEY_ROWS = 3
@@ -42,20 +42,32 @@ data class KeyboardMetrics(
         /** Relación entre la etiqueta y el alto de tecla (la etiqueta cabe). */
         const val LABEL_KEY_RATIO = 0.34f
 
-        /** Altura de tecla cuando la fila numérica está visible (capa letras). */
+        /** Overhead fijo del cuerpo: padding arriba/abajo + separación entre filas. */
         private const val OVERHEAD_KEY_BODY_DP =
             SCREEN_PADDING_DP * 2 + SPACING_DP * (TOTAL_ROWS - 1)
 
         /**
-         * Alto mínimo que consume el SHELL del teclado (strip + fila numérica +
-         * 4 filas al mínimo + padding + espaciados). Es el presupuesto que el
-         * teclado reclama siempre; en modo LOLA el panel de catálogo se lleva
-         * todo lo que quede por encima de esto (spec F3 §4: adaptarse al
-         * viewport real, nunca desbordar).
+         * Alto mínimo que consume el SHELL del teclado (strip + 4 filas al
+         * mínimo + padding + espaciados). Es el presupuesto que el teclado
+         * reclama siempre; en modo LOLA el panel de catálogo se lleva todo lo
+         * que quede por encima de esto (spec F3: adaptarse al viewport real,
+         * nunca desbordar).
          */
         const val MIN_KEY_BODY_DP =
-            STRIP_HEIGHT_DP + (NUMBER_ROW_HEIGHT_DP + SPACING_DP) +
-                OVERHEAD_KEY_BODY_DP + TOTAL_ROWS * MIN_KEY_HEIGHT_DP
+            STRIP_HEIGHT_DP + OVERHEAD_KEY_BODY_DP + TOTAL_ROWS * MIN_KEY_HEIGHT_DP
+
+        /** Alto máximo cómodo del SHELL: strip + 4 filas a [MAX_KEY_HEIGHT_DP] +
+         * padding + espaciados. Es lo que el teclado reclama cuando hay espacio
+         * de sobra; el panel de catálogo toma solo el excedente por encima de
+         * este tope (spec F3: el teclado se adapta, no queda al piso).
+         */
+        const val MAX_KEY_BODY_DP =
+            STRIP_HEIGHT_DP + OVERHEAD_KEY_BODY_DP + TOTAL_ROWS * MAX_KEY_HEIGHT_DP
+
+        /** Alto mínimo reservado al panel de catálogo en modo LOLA. Garantiza
+         * que el panel nunca desaparezca y que el teclado no invada su zona.
+         */
+        const val PANEL_MIN_DP = 120f
 
         /**
          * Calcula las métricas para [availableHeightDp] (alto real de la ventana
@@ -67,22 +79,12 @@ data class KeyboardMetrics(
          * nunca quedar recortado). [MAX_KEY_HEIGHT_DP] sigue siendo tope. La
          * etiqueta se dimensiona como fracción del alto de tecla y se compensa
          * con el font scale para que nunca se recorte.
-         *
-         * [showNumberRow] reserva el alto de la fila numérica (solo la capa de
-         * letras la muestra); la STRIP siempre se reserva (toolbar o sugerencias
-         * comparten esa zona estable).
          */
         fun compute(
             availableHeightDp: Float,
             fontScale: Float,
-            showNumberRow: Boolean = false,
         ): KeyboardMetrics {
-            val numberRowOverhead = if (showNumberRow) {
-                NUMBER_ROW_HEIGHT_DP + SPACING_DP
-            } else {
-                0f
-            }
-            val overhead = STRIP_HEIGHT_DP + OVERHEAD_KEY_BODY_DP + numberRowOverhead
+            val overhead = STRIP_HEIGHT_DP + OVERHEAD_KEY_BODY_DP
             val key = ((availableHeightDp - overhead) / TOTAL_ROWS)
                 .coerceAtMost(MAX_KEY_HEIGHT_DP)
                 .coerceAtLeast(0f)

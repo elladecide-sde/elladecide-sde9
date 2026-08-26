@@ -18,6 +18,6 @@ enum class KeyType {
     UNDO,
     COMMA,
     DOT,
-    TOOLS,
+    CURSOR,
     BACK,
 }

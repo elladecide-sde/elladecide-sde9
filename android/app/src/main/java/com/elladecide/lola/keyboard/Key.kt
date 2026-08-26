@@ -21,7 +21,7 @@ data class Key(val type: KeyType, val char: String? = null) {
         val UNDO = Key(KeyType.UNDO)
         val COMMA = Key(KeyType.COMMA)
         val DOT = Key(KeyType.DOT)
-        val TOOLS = Key(KeyType.TOOLS)
+        val CURSOR = Key(KeyType.CURSOR)
         val BACK = Key(KeyType.BACK)
     }
 }

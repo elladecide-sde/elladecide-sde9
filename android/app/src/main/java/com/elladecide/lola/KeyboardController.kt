@@ -63,6 +63,7 @@ class KeyboardController(
     private val onUndo: () -> Unit,
     private val onCurrentWord: () -> String,
     private val onDeleteWord: () -> Unit,
+    private val onSyncEditor: () -> Unit,
     private val suggestionProvider: SuggestionProvider,
 ) {
     var query by mutableStateOf("")
@@ -88,7 +89,7 @@ class KeyboardController(
 
     /** Altura de la ventana del IME en dp según modo/tamaño (adaptativa). */
     fun alturaDp(): Int = when {
-        enModoLola && size == KeyboardSize.EXPANDED -> LOLA_HEIGHT_DP
+        enModoLola && size == KeyboardSize.EXPANDED -> EXPANDED_FILL_DP
         enModoLola -> LOLA_COMPACT_HEIGHT_DP
         else -> CHAT_HEIGHT_DP
     }
@@ -114,7 +115,7 @@ class KeyboardController(
 
     /** True cuando la barra de sugerencias debe mostrarse (solo modo CHAT). */
     val sugerenciasVisibles: Boolean
-        get() = !enModoLola && capa != KeyboardLayer.EMOJI && capa != KeyboardLayer.AUX &&
+        get() = !enModoLola && capa != KeyboardLayer.EMOJI && capa != KeyboardLayer.CURSOR &&
             suggestionsEnabled && profile.suggestionsAllowed && suggestions.isNotEmpty()
 
     /** Capa visible, delegada al motor. */
@@ -289,10 +290,7 @@ class KeyboardController(
     /** Layout de la capa actual, ya resuelto por el motor. */
     fun teclasActuales(): List<List<Key>> = keyEngine.layout()
 
-    /** Fila numérica permanente (vacía fuera de la capa de letras). */
-    fun filaNumerica(): List<Key> = keyEngine.numberRow()
-
-    /** Fila inferior compartida (coma · espacio · punto · enter). */
+    /** Fila inferior compartida (123 · coma · emoji · espacio · punto · enter). */
     fun filaInferior(): List<Key> = keyEngine.bottomRow()
 
     fun etiqueta(k: Key): String = keyEngine.label(k, profile)
@@ -339,6 +337,9 @@ class KeyboardController(
     fun toggleModo() {
         mode = if (mode == KeyboardMode.CHAT) KeyboardMode.LOLA else KeyboardMode.CHAT
         if (!enModoLola) size = KeyboardSize.COMPACT
+        // Finaliza cualquier composición activa y resincroniza el editor: al
+        // entrar/salir de LOLA el texto queda completamente editable (spec §16).
+        onSyncEditor()
         refreshSuggestions()
         onCambiarAltura?.invoke()
     }
@@ -395,7 +396,13 @@ class KeyboardController(
 
         /** Alturas de la ventana del IME en dp (adaptativas al viewport real). */
         const val CHAT_HEIGHT_DP = 272
-        const val LOLA_COMPACT_HEIGHT_DP = 380
-        const val LOLA_HEIGHT_DP = 500
+        const val LOLA_COMPACT_HEIGHT_DP = 480
+
+        /**
+         * Sentinel: en LOLA EXPANDIDO el IME pide TODO el alto disponible; el
+         * `ImeRootView.onMeasure` lo clampa al viewport real (sin porcentajes
+         * fijos ni offsets mágicos, spec §14).
+         */
+        const val EXPANDED_FILL_DP = -1
     }
 }

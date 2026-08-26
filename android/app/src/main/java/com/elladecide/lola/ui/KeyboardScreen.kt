@@ -64,7 +64,6 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -82,8 +81,6 @@ import com.elladecide.lola.keyboard.AutoRepeat
 import com.elladecide.lola.keyboard.Key
 import com.elladecide.lola.keyboard.KeyboardLayer
 import com.elladecide.lola.keyboard.KeyboardMetrics
-import com.elladecide.lola.keyboard.KeyboardMode
-import com.elladecide.lola.keyboard.KeyboardSize
 import com.elladecide.lola.keyboard.KeyType
 import com.elladecide.lola.keyboard.PopupController
 import com.elladecide.lola.keyboard.PopupGeometry
@@ -139,19 +136,25 @@ fun KeyboardScreen(controller: KeyboardController) {
             Modifier.fillMaxWidth().fillMaxHeight().background(LolaBg),
         ) {
             val availableHeight = maxHeight.value
-            val showNumberRow = controller.capa == KeyboardLayer.LETTERS
-            // En modo LOLA el panel de catálogo (weight(1f)) se lleva el espacio
-            // por encima del shell mínimo del teclado; las métricas se calculan
-            // sobre lo que queda, así las teclas nunca desbordan ni se recortan
-            // (spec §4). El panel usa padding vertical propio en vez de spacers.
-            val panelMin = if (controller.enModoLola) {
-                (availableHeight - KeyboardMetrics.MIN_KEY_BODY_DP).coerceAtLeast(0f)
+            // FUENTE DE VERDAD ÚNICA: `availableForKeyboard` es el presupuesto
+            // que el teclado reclama y sobre el que `compute()` dimensiona las
+            // teclas; el panel de catálogo recibe `panelHeight` explícito (sin
+            // weight), así NO compite por espacio con el teclado (spec §17).
+            //
+            // En modo LOLA el teclado quiere hasta su máximo cómodo
+            // (MAX_KEY_BODY_DP); el panel toma el excedente. Si el viewport es
+            // chico, el panel se achica hasta PANEL_MIN_DP y el teclado encoge
+            // sus teclas vía `compute()`. En CHAT no hay panel: el teclado usa
+            // todo el alto.
+            val panelHeight = if (controller.enModoLola) {
+                (availableHeight - KeyboardMetrics.MAX_KEY_BODY_DP)
+                    .coerceAtLeast(KeyboardMetrics.PANEL_MIN_DP)
             } else {
                 0f
             }
-            val availableForKeyboard = (availableHeight - panelMin).coerceAtLeast(0f)
-            val metrics = remember(availableForKeyboard, density.fontScale, showNumberRow) {
-                KeyboardMetrics.compute(availableForKeyboard, density.fontScale, showNumberRow)
+            val availableForKeyboard = (availableHeight - panelHeight).coerceAtLeast(0f)
+            val metrics = remember(availableForKeyboard, density.fontScale) {
+                KeyboardMetrics.compute(availableForKeyboard, density.fontScale)
             }
             val viewportW = with(density) { maxWidth.toPx() }
             val viewportH = with(density) { maxHeight.toPx() }
@@ -163,6 +166,7 @@ fun KeyboardScreen(controller: KeyboardController) {
                 viewportW = viewportW,
                 viewportH = viewportH,
                 popupController = popupController,
+                panelHeight = panelHeight,
             )
             popupController.info?.let { PopupAlternativas(it) }
         }
@@ -177,6 +181,7 @@ private fun ContenidoTeclado(
     viewportW: Float,
     viewportH: Float,
     popupController: PopupController,
+    panelHeight: Float,
 ) {
     Column(
         modifier = Modifier
@@ -195,14 +200,16 @@ private fun ContenidoTeclado(
             ToolbarChat(controller)
         }
 
-        // Modo LOLA: el catálogo ocupa el área intermedia (padding vertical
-        // propio), el teclado queda abajo con el presupuesto que le corresponde.
+        // Modo LOLA: el catálogo ocupa un alto explícito (panelHeight, derivado
+        // del presupuesto del teclado en KeyboardScreen). SIN weight: así no
+        // compite por espacio con el teclado y las métricas coinciden con el
+        // layout real (spec §17: una sola fuente de verdad).
         if (controller.enModoLola) {
             PanelLola(
                 controller,
                 context,
                 Modifier
-                    .weight(1f)
+                    .height(panelHeight.dp)
                     .padding(vertical = metrics.spacingDp.dp),
             )
         }
@@ -210,10 +217,6 @@ private fun ContenidoTeclado(
         if (controller.capa == KeyboardLayer.EMOJI) {
             EmojiPanel(controller, Modifier.weight(1f))
         } else {
-            if (controller.capa == KeyboardLayer.LETTERS) {
-                FilaNumerica(controller, metrics)
-                Spacer(Modifier.height(metrics.spacingDp.dp))
-            }
             FilasTeclado(
                 controller = controller,
                 metrics = metrics,
@@ -231,7 +234,9 @@ private fun ContenidoTeclado(
 
 // ── Cinta superior ──────────────────────────────────────────────────────────
 
-/** Herramientas del modo CHAT (cuando no hay sugerencias que mostrar). */
+/** Herramientas del modo CHAT (solo herramientas, nunca controles de escritura):
+ *  acceso al teclado de cursor (acrónimo) y al modo LOLA. 123 y 😀 viven en la
+ *  fila inferior (spec §7-§10). */
 @Composable
 private fun ToolbarChat(controller: KeyboardController) {
     Row(
@@ -241,14 +246,8 @@ private fun ToolbarChat(controller: KeyboardController) {
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ToolbarButton("123", "Números y símbolos", controller.capa == KeyboardLayer.SYMBOLS) {
-            controller.press(Key.LAYER)
-        }
-        ToolbarButton("😀", "Emojis", controller.capa == KeyboardLayer.EMOJI) {
-            controller.press(Key.EMOJI)
-        }
-        ToolbarButton("≡", "Herramientas", controller.capa == KeyboardLayer.AUX) {
-            controller.press(Key.TOOLS)
+        ToolbarButton("◀▶", "Teclado de cursor", controller.capa == KeyboardLayer.CURSOR) {
+            controller.press(Key.CURSOR)
         }
         Spacer(Modifier.weight(1f))
         ToolbarButton("LOLA", "Modo LOLA", controller.enModoLola) {
@@ -302,41 +301,18 @@ private fun ToolbarButton(text: String, desc: String, active: Boolean, onClick: 
     }
 }
 
-// ── Fila numérica ───────────────────────────────────────────────────────────
-
-@Composable
-private fun FilaNumerica(controller: KeyboardController, metrics: KeyboardMetrics) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(KeyboardMetrics.NUMBER_ROW_HEIGHT_DP.dp),
-        horizontalArrangement = Arrangement.spacedBy(metrics.spacingDp.dp),
-    ) {
-        controller.filaNumerica().forEach { tecla ->
-            Tecla(
-                label = controller.etiqueta(tecla),
-                descripcion = controller.descripcion(tecla),
-                descripcionEstado = controller.descripcionEstado(tecla),
-                modifier = Modifier.weight(controller.peso(tecla)),
-                acento = false,
-                activo = controller.esActiva(tecla),
-                onTap = { controller.press(tecla) },
-                metrics = metrics,
-            )
-        }
-    }
-}
-
 // ── Sugerencias (solo modo CHAT) ────────────────────────────────────────────
 
 @Composable
 private fun BarraSugerencias(controller: KeyboardController) {
+    // Cada sugerencia mide su contenido (sin weight): si no entran todas, la
+    // fila scrollea en vez de recortar las palabras (spec §11: sin clipping).
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(KeyboardMetrics.STRIP_HEIGHT_DP.dp)
-            .padding(bottom = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         controller.suggestions.forEach { palabra ->
@@ -344,14 +320,12 @@ private fun BarraSugerencias(controller: KeyboardController) {
                 text = palabra,
                 color = LolaText,
                 maxLines = 1,
-                textAlign = TextAlign.Center,
                 modifier = Modifier
-                    .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
                     .background(LolaSurface)
                     .clickable { controller.sugerir(palabra) }
                     .semantics { contentDescription = "Sugerencia $palabra" }
-                    .padding(vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
     }
@@ -410,7 +384,11 @@ private fun FilaInferior(controller: KeyboardController, metrics: KeyboardMetric
                 descripcion = controller.descripcion(tecla),
                 descripcionEstado = controller.descripcionEstado(tecla),
                 modifier = Modifier.weight(controller.peso(tecla)),
-                acento = true,
+                // Los controles de escritura (coma/espacio/punto) en color normal;
+                // los accesos (123/emoji/enter) resaltados en acento.
+                acento = tecla.type == KeyType.LAYER ||
+                    tecla.type == KeyType.EMOJI ||
+                    tecla.type == KeyType.ENTER,
                 activo = controller.esActiva(tecla),
                 onGlide = if (tecla.type == KeyType.SPACE) ({ controller.moverCursor(it) }) else null,
                 onTap = { controller.press(tecla) },

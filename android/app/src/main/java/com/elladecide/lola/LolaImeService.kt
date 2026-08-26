@@ -72,6 +72,7 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
             onUndo = { session.undo() },
             onCurrentWord = { session.currentWord() },
             onDeleteWord = { session.deleteWord() },
+            onSyncEditor = { session.syncEditor() },
             suggestionProvider = PrefixSuggestionProvider(PlaceholderWords.LIST),
         )
         controller.suggestionsEnabled = getSharedPreferences("lola", Context.MODE_PRIVATE)
@@ -92,6 +93,24 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
     override fun onFinishInput() {
         super.onFinishInput()
         session.onFinishInput()
+    }
+
+    /**
+     * El editor reporta la selección real (fuente de verdad del cursor, spec
+     * §17): se reenvía a la sesión para que el composing y la navegación se
+     * resincronicen. Sin esto, el cursor interno diverge del real (bugs de
+     * "insertar en el medio" y "cursor que vuelve atrás").
+     */
+    override fun onUpdateSelection(
+        oldSelStart: Int,
+        oldSelEnd: Int,
+        newSelStart: Int,
+        newSelEnd: Int,
+        candidatesStart: Int,
+        candidatesEnd: Int,
+    ) {
+        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        session.onSelectionChanged(newSelStart, newSelEnd)
     }
 
     /**
@@ -144,7 +163,14 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
 
     /** Altura de la ventana del IME en px según el modo (CHAT/LOLA/tamaño). */
     private fun alturaPx(controller: KeyboardController): Int {
-        return (controller.alturaDp() * resources.displayMetrics.density).toInt()
+        val dp = controller.alturaDp()
+        // EXPANDED_FILL_DP: pedir todo el alto de la pantalla; el ImeRootView
+        // lo clampa al área realmente disponible (sin porcentajes fijos).
+        return if (dp < 0) {
+            resources.displayMetrics.heightPixels
+        } else {
+            (dp * resources.displayMetrics.density).toInt()
+        }
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false

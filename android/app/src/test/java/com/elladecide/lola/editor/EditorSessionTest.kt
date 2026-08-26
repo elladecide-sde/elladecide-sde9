@@ -11,10 +11,14 @@ class EditorSessionTest {
     private val ACTION_DONE = 0x00000006
 
     private fun session(
-        conn: EditorConnection,
+        conn: FakeEditorConnection,
         inputType: Int = CLASS_TEXT,
         imeOptions: Int = 0,
-    ): EditorSession = EditorSession().also { it.onStartInput(inputType, imeOptions) { conn } }
+    ): EditorSession = EditorSession().also {
+        it.onStartInput(inputType, imeOptions) { conn }
+        // El editor reporta su selección inicial (onUpdateSelection).
+        it.onSelectionChanged(conn.text.length, conn.text.length)
+    }
 
     @Test
     fun `commit escribe a traves de la conexion`() {
@@ -357,5 +361,123 @@ class EditorSessionTest {
         val fake = FakeEditorConnection("")
         session(fake).deleteWord()
         assertEquals("", fake.text)
+    }
+
+    // ── Cursor: escribir en el medio / final / inicio (spec §19) ─────────────
+
+    @Test
+    fun `escribir despues de mover el cursor al medio inserta ahi`() {
+        val fake = FakeEditorConnection("hola mundo")
+        val s = session(fake)
+        fake.setSelection(5, 5) // el editor mueve el cursor (tap)
+        s.onSelectionChanged(5, 5)
+        s.typeText("X")
+        assertEquals("hola Xmundo", fake.text)
+        assertEquals(6, fake.cursorPos)
+    }
+
+    @Test
+    fun `escribir despues de mover el cursor al final permanece al final`() {
+        val fake = FakeEditorConnection("hola mundo")
+        val s = session(fake)
+        fake.setSelection(10, 10)
+        s.onSelectionChanged(10, 10)
+        s.typeText("X")
+        assertEquals("hola mundoX", fake.text)
+        assertEquals(11, fake.cursorPos)
+    }
+
+    @Test
+    fun `escribir despues de mover el cursor al inicio inserta ahi`() {
+        val fake = FakeEditorConnection("hola")
+        val s = session(fake)
+        fake.setSelection(0, 0)
+        s.onSelectionChanged(0, 0)
+        s.typeText("x")
+        assertEquals("xhola", fake.text)
+        assertEquals(1, fake.cursorPos)
+    }
+
+    @Test
+    fun `escribir tras varias lineas no vuelve el cursor atras`() {
+        val largo = "a".repeat(150) + " "
+        val fake = FakeEditorConnection(largo) // 151 chars: excede LOOKBACK
+        val s = session(fake)
+        s.typeText("b")
+        s.typeText("c")
+        assertEquals(largo + "bc", fake.text)
+        assertEquals(largo.length + 2, fake.cursorPos)
+    }
+
+    @Test
+    fun `mover cursor en texto largo usa la posicion real no la ventana truncada`() {
+        val largo = "a".repeat(150)
+        val fake = FakeEditorConnection(largo)
+        val s = session(fake)
+        s.moveCursor(-1)
+        assertEquals(149, fake.cursorPos)
+    }
+
+    @Test
+    fun `borrar en el medio despues de mover el cursor`() {
+        val fake = FakeEditorConnection("hola mundo")
+        val s = session(fake)
+        fake.setSelection(5, 5)
+        s.onSelectionChanged(5, 5)
+        s.deleteBackwards()
+        assertEquals("holamundo", fake.text)
+        assertEquals(4, fake.cursorPos)
+    }
+
+    // ── Sincronización con el editor (una única fuente de verdad) ────────────
+
+    @Test
+    fun `tocar fuera del composing lo finaliza y el tipeo inserta ahi`() {
+        val fake = FakeEditorConnection("pre")
+        val s = session(fake)
+        s.typeText("hola") // composing en [3,7)
+        assertEquals("prehola", fake.text)
+        fake.setSelection(2, 2) // tap fuera del composing
+        s.onSelectionChanged(2, 2)
+        assertEquals("", s.currentWord())
+        s.typeText("X")
+        assertEquals("prXehola", fake.text)
+        assertEquals(3, fake.cursorPos)
+    }
+
+    @Test
+    fun `seleccion de rango finaliza la composicion`() {
+        val fake = FakeEditorConnection()
+        val s = session(fake)
+        s.typeText("hola")
+        s.onSelectionChanged(0, 2)
+        assertEquals("", s.currentWord())
+    }
+
+    @Test
+    fun `syncEditor finaliza el composing y deja el texto editable`() {
+        val fake = FakeEditorConnection()
+        val s = session(fake)
+        s.typeText("lola")
+        assertEquals("lola", fake.text)
+        assertEquals("lola", s.currentWord())
+        s.syncEditor() // LOLA → CHAT: finaliza la composición
+        assertEquals("lola", fake.text)
+        assertEquals("", s.currentWord())
+        s.deleteBackwards()
+        assertEquals("lol", fake.text)
+        s.deleteBackwards()
+        assertEquals("lo", fake.text)
+    }
+
+    @Test
+    fun `cambio de modo no pierde el texto ni el cursor`() {
+        val fake = FakeEditorConnection("pre ")
+        val s = session(fake)
+        s.typeText("hola")
+        assertEquals(8, fake.cursorPos)
+        s.syncEditor()
+        assertEquals("pre hola", fake.text)
+        assertEquals(8, fake.cursorPos)
     }
 }
