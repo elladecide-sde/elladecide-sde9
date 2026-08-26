@@ -70,23 +70,26 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.elladecide.lola.CartItem
+import com.elladecide.lola.Concepto
+import com.elladecide.lola.DescuentoModo
 import com.elladecide.lola.KeyboardController
+import com.elladecide.lola.Lectura
 import com.elladecide.lola.Mensaje
 import com.elladecide.lola.ModoResultado
 import com.elladecide.lola.Precio
+import com.elladecide.lola.ValorModo
 import com.elladecide.lola.data.ImageEntry
 import com.elladecide.lola.data.Product
+import com.elladecide.lola.emoji.Emoji
 import com.elladecide.lola.emoji.EmojiCategory
+import com.elladecide.lola.emoji.EmojiData
 import com.elladecide.lola.keyboard.AutoRepeat
 import com.elladecide.lola.keyboard.Key
 import com.elladecide.lola.keyboard.KeyboardLayer
 import com.elladecide.lola.keyboard.KeyboardMetrics
 import com.elladecide.lola.keyboard.KeyType
 import com.elladecide.lola.keyboard.PopupController
-import com.elladecide.lola.keyboard.PopupGeometry
-import com.elladecide.lola.keyboard.PopupGesture
 import com.elladecide.lola.keyboard.PopupInfo
-import com.elladecide.lola.keyboard.PopupPositioner
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 import kotlin.math.floor
@@ -117,6 +120,7 @@ private val DOBLE_TAP_MS = 300L
 private val SWIPE_THRESHOLD_DP = 40f
 private val GLIDE_SLOP_DP = 12f
 private val GLIDE_STEP_DP = 32f
+private val TOUCH_SLOP_DP = 16f
 
 // Resultados del bucle de autorepeat (withTimeoutOrNull): soltar vs deslizar.
 private const val SOLTO = 1
@@ -222,7 +226,14 @@ private fun ContenidoTeclado(
         }
 
         if (controller.capa == KeyboardLayer.EMOJI) {
-            EmojiPanel(controller, Modifier.weight(1f))
+            EmojiPanel(
+                controller = controller,
+                metrics = metrics,
+                viewportW = viewportW,
+                viewportH = viewportH,
+                popupController = popupController,
+                modifier = Modifier.weight(1f),
+            )
         } else {
             FilasTeclado(
                 controller = controller,
@@ -427,26 +438,21 @@ private fun PanelLola(
 
         Spacer(Modifier.height(4.dp))
 
-        // Carpeta de imágenes · descuento · modo
+        // Acciones: carpeta · ajustes · modo de resultado.
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            TextButton(onClick = { controller.elegirCarpeta(context) }) {
-                Text(
-                    text = if (controller.imagenes.isEmpty()) "📂" else "📂 ${controller.imagenes.size}",
-                    color = LolaAccent,
-                )
-            }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Precio.DESCUENTOS.forEach { d ->
-                    TextButton(onClick = { controller.descuento = d }) {
-                        Text(
-                            text = if (d == 0) "Sin" else "-$d%",
-                            color = if (controller.descuento == d) LolaAccent else LolaMuted,
-                        )
-                    }
+                TextButton(onClick = { controller.elegirCarpeta(context) }) {
+                    Text(
+                        text = if (controller.imagenes.isEmpty()) "📂" else "📂 ${controller.imagenes.size}",
+                        color = LolaAccent,
+                    )
+                }
+                TextButton(onClick = { controller.abrirConfig(context) }) {
+                    Text("⚙", color = LolaMuted)
                 }
             }
             TextButton(onClick = controller::toggleModoResultado) {
@@ -454,6 +460,12 @@ private fun PanelLola(
                 Text("PRECIOS → $label", color = LolaAccent)
             }
         }
+
+        // Switches de formato del mensaje (LC/LL · N/U · TextoDesc · Valor).
+        FormatoSwitches(controller)
+
+        // Descuento: TODOS (global) o MANUAL (por ítem).
+        SeccionDescuento(controller)
 
         Spacer(Modifier.height(4.dp))
 
@@ -493,41 +505,174 @@ private fun PanelLola(
     }
 }
 
+/** Switches de formato del pedido (port de LOLA v3.2): LC/LL · N/U · Txt · Valor. */
+@Composable
+private fun FormatoSwitches(controller: KeyboardController) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        FormatoSwitch("LC", controller.pedidoConfig.lectura == Lectura.LC) { controller.setLectura(Lectura.LC) }
+        FormatoSwitch("LL", controller.pedidoConfig.lectura == Lectura.LL) { controller.setLectura(Lectura.LL) }
+        Spacer(Modifier.width(4.dp))
+        FormatoSwitch("N", controller.pedidoConfig.concepto == Concepto.N) { controller.setConcepto(Concepto.N) }
+        FormatoSwitch("U", controller.pedidoConfig.concepto == Concepto.U) { controller.setConcepto(Concepto.U) }
+        Spacer(Modifier.width(4.dp))
+        val textoDesc = controller.pedidoConfig.textoDesc
+        FormatoSwitch("Txt ${if (textoDesc) "ON" else "OFF"}", textoDesc) { controller.setTextoDesc(!textoDesc) }
+        Spacer(Modifier.width(4.dp))
+        val valor = controller.pedidoConfig.valorModo
+        FormatoSwitch("LISTA", valor == ValorModo.LISTA) { controller.setValorModo(ValorModo.LISTA) }
+        FormatoSwitch("DESC.", valor == ValorModo.DESCUENTO) { controller.setValorModo(ValorModo.DESCUENTO) }
+    }
+}
+
+@Composable
+private fun FormatoSwitch(label: String, active: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (active) LolaAccent else LolaSurface)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            color = if (active) Color.Black else LolaText,
+            fontWeight = FontWeight.Bold,
+            fontSize = 11.sp,
+            maxLines = 1,
+        )
+    }
+}
+
+/** Sección de descuento: TODOS (global) / MANUAL (por ítem). */
+@Composable
+private fun SeccionDescuento(controller: KeyboardController) {
+    val manual = controller.descuentoModo == DescuentoModo.MANUAL
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FormatoSwitch("TODOS", !manual) { controller.setDescuentoModo(DescuentoModo.TODOS) }
+            Spacer(Modifier.width(4.dp))
+            FormatoSwitch("MANUAL", manual) { controller.setDescuentoModo(DescuentoModo.MANUAL) }
+            Spacer(Modifier.width(8.dp))
+            if (!manual) {
+                OpcionesDescuento(
+                    values = controller.descuento,
+                    onSelect = { controller.descuento = it },
+                )
+            }
+        }
+        if (manual) {
+            Spacer(Modifier.height(2.dp))
+            val editing = controller.editingCartIndex
+            if (editing == null) {
+                Text(
+                    "Elegí el descuento por ítem: tocá Seleccionar en el carrito",
+                    color = LolaMuted,
+                    fontSize = 11.sp,
+                )
+            } else {
+                val nombre = controller.cart.getOrNull(editing)?.product?.nombre ?: ""
+                Text(
+                    "Descuento: ${nombre.take(18)}${if (nombre.length > 18) "…" else ""}",
+                    color = LolaText,
+                    fontSize = 11.sp,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OpcionesDescuento(
+                    values = controller.pendingDescuento,
+                    onSelect = controller::setPendingDescuento,
+                )
+            }
+        }
+    }
+}
+
+private val OPCIONES_DESCUENTO = listOf(0 to "Sin", 10 to "-10%", 15 to "-15%", 20 to "-20%", -15 to "+15%")
+
+@Composable
+private fun OpcionesDescuento(
+    values: Int,
+    onSelect: (Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OPCIONES_DESCUENTO.forEach { (v, label) ->
+            FormatoSwitch(label, values == v) { onSelect(v) }
+        }
+    }
+}
+
 // ── Panel de emojis ─────────────────────────────────────────────────────────
 
 @Composable
-private fun EmojiPanel(controller: KeyboardController, modifier: Modifier = Modifier) {
+private fun EmojiPanel(
+    controller: KeyboardController,
+    metrics: KeyboardMetrics,
+    viewportW: Float,
+    viewportH: Float,
+    popupController: PopupController?,
+    modifier: Modifier = Modifier,
+) {
     val engine = controller.emojiEngine
+    val buscando = engine.query.isNotBlank()
     Column(modifier = modifier) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            engine.categories().forEach { cat ->
-                val selected = engine.category == cat
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (selected) LolaAccent else Color.Transparent)
-                        .clickable { engine.selectCategory(cat) }
-                        .semantics {
-                            contentDescription = "Categoría ${cat.name.lowercase()}"
-                            if (selected) stateDescription = "Seleccionada"
-                        }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(cat.icon, fontSize = 18.sp)
+        // Buscador por nombre (acentos/mayúsculas no importan).
+        OutlinedTextField(
+            value = engine.query,
+            onValueChange = engine::buscar,
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("Buscar emoji…", color = LolaMuted) },
+            singleLine = true,
+            textStyle = androidx.compose.material3.LocalTextStyle.current.copy(color = LolaText),
+        )
+
+        if (buscando) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = engine::limpiarBusqueda) { Text("Limpiar", color = LolaAccent) }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                engine.categories().forEach { cat ->
+                    val selected = engine.category == cat
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (selected) LolaAccent else Color.Transparent)
+                            .clickable { engine.selectCategory(cat) }
+                            .semantics {
+                                contentDescription = "Categoría ${cat.name.lowercase()}"
+                                if (selected) stateDescription = "Seleccionada"
+                            }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(cat.icon, fontSize = 18.sp)
+                    }
                 }
             }
         }
 
         val emojis = engine.emojis()
-        if (engine.category == EmojiCategory.RECENT && emojis.isEmpty()) {
+        if (emojis.isEmpty()) {
             Text(
-                text = "Sin emojis recientes",
+                text = if (buscando) "Sin resultados para \"${engine.query}\"" else "Sin emojis recientes",
                 color = LolaMuted,
                 modifier = Modifier.padding(12.dp),
             )
@@ -539,20 +684,119 @@ private fun EmojiPanel(controller: KeyboardController, modifier: Modifier = Modi
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 items(emojis) { emoji ->
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { controller.emoji(emoji.glyph) }
-                            .semantics { contentDescription = emoji.name }
-                            .padding(vertical = 4.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(emoji.glyph, fontSize = 22.sp)
-                    }
+                    EmojiCelda(
+                        emoji = emoji,
+                        metrics = metrics,
+                        viewportW = viewportW,
+                        viewportH = viewportH,
+                        popupController = popupController,
+                        onTap = { controller.emoji(emoji.glyph) },
+                        onSelect = { controller.emoji(it) },
+                    )
                 }
             }
         }
+    }
+}
+
+/**
+ * Celda de emoji: tap inserta el glifo; long-press muestra el popup de tonos de
+ * piel (si el emoji lo soporta) con el mismo gesto de swipe de las teclas.
+ * Durante el long-press, moverse más del slop cancela (deja scrollear al grid).
+ */
+@Composable
+private fun EmojiCelda(
+    emoji: Emoji,
+    metrics: KeyboardMetrics,
+    viewportW: Float,
+    viewportH: Float,
+    popupController: PopupController?,
+    onTap: () -> Unit,
+    onSelect: (String) -> Unit,
+) {
+    val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
+    var posPx by remember { mutableStateOf(Offset.Zero) }
+    var sizePx by remember { mutableStateOf(IntSize.Zero) }
+    var pressed by remember { mutableStateOf(false) }
+
+    val onTapActual by rememberUpdatedState(onTap)
+    val onSelectActual by rememberUpdatedState(onSelect)
+    val variantsActual by rememberUpdatedState(EmojiData.skinToneVariants(emoji.glyph))
+    val vw by rememberUpdatedState(viewportW)
+    val vh by rememberUpdatedState(viewportH)
+    val popupCtlActual by rememberUpdatedState(popupController)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (pressed) LolaAccent else Color.Transparent)
+            .onGloballyPositioned {
+                posPx = it.positionInRoot()
+                sizePx = it.size
+            }
+            .semantics { contentDescription = emoji.name }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    pressed = true
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    try {
+                        val variants = variantsActual
+                        val popupCtl = popupCtlActual
+                        val slopPx = with(density) { TOUCH_SLOP_DP.dp.toPx() }
+                        // Esperar up (tap) o long-press; moverse más del slop
+                        // cancela (el grid scrollea, no se abre el popup).
+                        val tap = withTimeoutOrNull(LONG_PRESS_MS) {
+                            while (true) {
+                                val e = awaitPointerEvent()
+                                val change = e.changes.firstOrNull { it.id == down.id } ?: continue
+                                if (change.changedToUp()) return@withTimeoutOrNull true
+                                if ((change.position - down.position).getDistance() > slopPx) {
+                                    return@withTimeoutOrNull false
+                                }
+                            }
+                        }
+                        when (tap) {
+                            true -> onTapActual()
+                            false -> Unit // scroll en curso; el grid lo maneja.
+                            null -> {
+                                // Long-press.
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                if (variants.isNotEmpty() && popupCtl != null) {
+                                    when (val outcome = seleccionarAlternativa(
+                                        down = down,
+                                        posPx = posPx,
+                                        sizePx = sizePx,
+                                        viewportW = vw,
+                                        viewportH = vh,
+                                        alternativas = variants,
+                                        popupCtl = popupCtl,
+                                        metrics = metrics,
+                                        density = density,
+                                    )) {
+                                        is PopupSwipeOutcome.Seleccionada -> onSelectActual(outcome.valor)
+                                        PopupSwipeOutcome.Cancelado -> Unit
+                                        PopupSwipeOutcome.SinSeleccion -> onTapActual()
+                                    }
+                                } else {
+                                    while (true) {
+                                        val e = awaitPointerEvent()
+                                        if (e.changes.firstOrNull { it.id == down.id }?.changedToUp() == true) break
+                                    }
+                                    onTapActual()
+                                }
+                            }
+                        }
+                    } finally {
+                        pressed = false
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(emoji.glyph, fontSize = 22.sp)
     }
 }
 
@@ -683,7 +927,6 @@ private fun Tecla(
                         val vh = viewportHActual
                         val popupCtl = popupController
                         val comprometerFn = comprometerActual
-                        val tokenInicio = popupCtl?.cancelToken ?: 0
 
                         // Cursor glide (barra espaciadora): arrastrar horizontal
                         // mueve el cursor; soltar sin arrastrar = tap (espacio).
@@ -763,57 +1006,20 @@ private fun Tecla(
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             when {
                                 altList.isNotEmpty() && popupCtl != null -> {
-                                    val celdaPx = with(density) { metrics.popupCellDp.dp.toPx() }
-                                    val altoPx = with(density) { metrics.popupHeightDp.dp.toPx() }
-                                    val popupW = celdaPx * altList.size
-                                    val (popupLeft, popupTop) = PopupPositioner.position(
-                                        keyLeft = posPx.x,
-                                        keyTop = posPx.y,
-                                        keyWidth = sizePx.width.toFloat(),
-                                        keyHeight = sizePx.height.toFloat(),
-                                        popupWidth = popupW,
-                                        popupHeight = altoPx,
-                                        viewportWidth = vw,
-                                        viewportHeight = vh,
-                                    )
-                                    val gesture = PopupGesture().also { it.start() }
-                                    popupCtl.mostrar(
-                                        PopupInfo(
-                                            altList,
-                                            popupLeft.toInt(),
-                                            popupTop.toInt(),
-                                            celdaPx.toInt(),
-                                            altoPx.toInt(),
-                                        ),
-                                    )
-                                    var cancelado = false
-                                    while (true) {
-                                        val e = awaitPointerEvent()
-                                        val change = e.changes.firstOrNull { it.id == down.id } ?: break
-                                        // Back físico (spec §8B) cierra el popup e
-                                        // incrementa el token: se detecta ANTES del up
-                                        // para no commitear una alternativa fantasma.
-                                        if (popupCtl.cancelToken != tokenInicio) { cancelado = true; break }
-                                        if (change.changedToUp()) break
-                                        if (!change.pressed) { cancelado = true; break }
-                                        val dedoX = posPx.x + change.position.x
-                                        val idx = PopupGeometry.cellIndexAt(
-                                            dedoX, popupLeft, popupW, celdaPx, altList.size,
-                                        )
-                                        gesture.moveTo(idx)
-                                        popupCtl.seleccionar(gesture.selected)
-                                    }
-                                    if (!cancelado) {
-                                        val sel = gesture.commit()
-                                        if (sel >= 0) {
-                                            popupCtl.info?.alternativas?.getOrNull(sel)?.let(comprometerFn)
-                                        } else {
-                                            tapFn()
-                                        }
-                                        popupCtl.cerrar()
-                                    } else {
-                                        gesture.cancel()
-                                        popupCtl.cerrar()
+                                    when (val outcome = seleccionarAlternativa(
+                                        down = down,
+                                        posPx = posPx,
+                                        sizePx = sizePx,
+                                        viewportW = vw,
+                                        viewportH = vh,
+                                        alternativas = altList,
+                                        popupCtl = popupCtl,
+                                        metrics = metrics,
+                                        density = density,
+                                    )) {
+                                        is PopupSwipeOutcome.Seleccionada -> comprometerFn(outcome.valor)
+                                        PopupSwipeOutcome.Cancelado -> Unit
+                                        PopupSwipeOutcome.SinSeleccion -> tapFn()
                                     }
                                 }
                                 longPressFn != null -> {
@@ -930,14 +1136,16 @@ private fun Carrito(controller: KeyboardController, modifier: Modifier = Modifie
     }
     LazyColumn(modifier = modifier) {
         itemsIndexed(controller.cart) { i, item ->
-            CartRow(item) { controller.removeFromCart(i) }
+            CartRow(item, i, controller) { controller.removeFromCart(i) }
         }
     }
 }
 
 @Composable
-private fun CartRow(item: CartItem, onRemove: () -> Unit) {
+private fun CartRow(item: CartItem, index: Int, controller: KeyboardController, onRemove: () -> Unit) {
     val lista = if (item.listaIndex == -1) "Todas las listas" else "Lista ${item.listaIndex + 1}"
+    val manual = controller.descuentoModo == DescuentoModo.MANUAL && item.listaIndex != -1
+    val editando = controller.editingCartIndex == index
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -947,9 +1155,50 @@ private fun CartRow(item: CartItem, onRemove: () -> Unit) {
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(item.product.nombre, color = LolaText)
-            Text(lista, color = LolaMuted)
+            Text(
+                lista + if (item.qty > 1) " × ${item.qty}" else "",
+                color = LolaMuted,
+                fontSize = 11.sp,
+            )
+        }
+        if (controller.pedidoConfig.concepto == Concepto.U && item.listaIndex != -1) {
+            QtyStepper(
+                qty = item.qty,
+                onMinus = { controller.cambiarCantidad(index, -1) },
+                onPlus = { controller.cambiarCantidad(index, 1) },
+            )
+        }
+        if (manual) {
+            TextButton(
+                onClick = {
+                    if (editando) controller.aplicarItemDescuento() else controller.editarItem(index)
+                },
+            ) {
+                Text(
+                    if (editando) "Recalcular" else "Seleccionar",
+                    color = if (editando) LolaAccent else LolaMuted,
+                    fontSize = 11.sp,
+                )
+            }
         }
         Spacer(Modifier.width(8.dp))
         TextButton(onClick = onRemove) { Text("✕", color = LolaMuted) }
+    }
+}
+
+/** Stepper de cantidad (solo visible en concepto U). Mínimo 1. */
+@Composable
+private fun QtyStepper(qty: Int, onMinus: () -> Unit, onPlus: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        TextButton(onClick = onMinus, enabled = qty > 1) {
+            Text("−", color = LolaAccent, fontSize = 14.sp)
+        }
+        Text("$qty", color = LolaText, fontSize = 13.sp)
+        TextButton(onClick = onPlus) {
+            Text("+", color = LolaAccent, fontSize = 14.sp)
+        }
     }
 }

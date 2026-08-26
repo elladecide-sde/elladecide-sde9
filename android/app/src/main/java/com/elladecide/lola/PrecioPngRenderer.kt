@@ -76,28 +76,28 @@ object PrecioPngRenderer {
     )
 
     /** Render del pedido completo (filas por lista + caja de TOTAL). */
-    fun renderPedido(cart: List<CartItem>, descuento: Int): Bitmap {
+    fun renderPedido(cart: List<CartItem>, descuento: Int, config: PedidoConfig): Bitmap {
         val namePaint = paint(19f, NAME, Typeface.BOLD)
         val valorPaint = paint(20f, VALOR, Typeface.BOLD)
         val subPaint = paint(13f, MUTED)
         val footerPaint = paint(13f, MUTED, Typeface.ITALIC)
 
-        // 1) Preparar filas.
+        // 1) Preparar filas (mismas piezas que el texto: buildLineParts).
         val filas = mutableListOf<Fila>()
         for (item in cart) {
             val indices =
                 if (item.listaIndex == -1) item.product.preciosList().indices.toList()
                 else listOf(item.listaIndex)
             for (i in indices) {
-                val valor = Mensaje.fmt(item.product.preciosList()[i])
-                val vw = valorPaint.measureText(valor)
-                val nameLines = wrap(Precio.displayName(item.product), namePaint, INNER - vw - 20f)
+                val p = Precio.buildLineParts(item, i, descuento, config)
+                val vw = valorPaint.measureText(p.valor)
+                val nameLines = wrap(p.name, namePaint, INNER - vw - 20f)
                 val sub = ellipsize(
-                    "${Mensaje.listaMsg(i)} · ${Precio.resto(item, i, descuento)}",
+                    p.lista + if (p.resto.isEmpty()) "" else " · ${p.resto}",
                     subPaint,
                     INNER,
                 )
-                filas.add(Fila(nameLines, valor, sub, nameLines.size * NAME_LINE_H + SUB_LINE_H + ROW_GAP))
+                filas.add(Fila(nameLines, p.valor, sub, nameLines.size * NAME_LINE_H + SUB_LINE_H + ROW_GAP))
             }
         }
 

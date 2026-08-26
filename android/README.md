@@ -73,13 +73,19 @@ android/
   Privacidad opt-out: las sugerencias se apagan en password y si el usuario las
   desactiva en ajustes.
 - **Emoji + gestos** (F5): panel de emojis con categorías + recientes persistidos,
+  **tonos de piel** (long-press, tipo Gboard) y **búsqueda por nombre**,
   swipe-delete (borrar palabra) y cursor glide en la barra espaciadora.
 - **Cursor dentro del composing** (F6 parcial): el cursor navega dentro de la
   palabra en composición, tipear inserta en esa posición y borrar respeta el
   cluster anterior al cursor.
 - **Carrito**: agregá varios productos y elegí lista (1-4 o "todas") por ítem.
-- **Descuento global** (0/10/15/20%) + oferta (sin descuento, con recargo tarjeta).
+- **Formato del mensaje** (port de los switches de `buildLineParts` v3.2):
+  lectura LC/LL, concepto N/U (stepper de cantidad), texto de descuento
+  ON/OFF, valor LISTA/DESCUENTO y descuento **TODOS / MANUAL por ítem**.
+- **Descuento global** (0/10/15/20%) + oferta (sin descuento, con recargo tarjeta)
+  + **recargo +15% tarjeta** como opción.
 - **Totales** tarjeta/efectivo.
+- **Ajustes** (⚙): `base_url` del backend, secret (Bearer) y modo de imágenes.
 - Enviar el pedido completo:
   - modo **TEXTO** vía `commitText()`.
   - modo **PNG** vía `commitContent()` (imagen con filas + caja de TOTAL, estilo
@@ -91,14 +97,21 @@ android/
 
 ## Siguiente
 
-- [ ] **Emoji skin-tones + búsqueda** (diferido de F5; no depende del diccionario).
-- [ ] **Descuento MANUAL por ítem + concepto N/U + valorModo** (switches restantes
-      de `buildLineParts`).
-- [ ] **Pantalla de configuración**: BASE_URL, secret, modo de imágenes.
-- [ ] **Sync real**: apuntar `SyncRepository.BASE_URL` a tu Worker y seedear D1
+- [ ] **Sync real**: apuntar `base_url` (Ajustes) a tu Worker y seedear D1
       (el `codigo_unico` se genera con la regla pendiente de backend/schema.sql).
 - [ ] **Neurona/diccionario**: enchufar al contrato `SuggestionProvider` cuando el
       diccionario binario esté listo (proyecto aparte).
+
+### Hecho en esta tanda
+
+- **Emoji skin-tones + búsqueda**: long-press en emojis de mano/gesto abre el
+  popup con los 5 tonos de piel (reusa el gesto de swipe de las teclas) y
+  buscador por nombre sin distinguir acentos/mayúsculas.
+- **Switches de `buildLineParts`** (port completo de LOLA v3.2): lectura
+  LC/LL, concepto N/U (con stepper de cantidad), texto de descuento ON/OFF,
+  valor LISTA/DESCUENTO y descuento **TODOS / MANUAL por ítem**. Se persisten.
+- **Pantalla de configuración** (⚙ en el panel LOLA): `base_url`, secret
+  (Bearer opcional para el sync) y modo de imágenes.
 
 ## Tests
 
@@ -113,6 +126,7 @@ Cubren `EditorInfoClassifier`, `Grapheme` y `EditorSession` (con un
 
 ## Nota sobre sync
 
-`SyncRepository.BASE_URL = "http://10.0.2.2:8787"` (emulador → localhost del
-host). Si levantás el backend con `npm run dev`, el teclado sincroniza solo; si
-no hay backend, usa el seed offline. En producción, poné la URL del Worker.
+El `base_url` por defecto es `http://10.0.2.2:8787` (emulador → localhost del
+host). Se puede cambiar en la **pantalla de ajustes** del teclado (⚙). Si
+levantás el backend con `npm run dev`, el teclado sincroniza solo; si no hay
+backend, usa el seed offline. En producción, poné la URL del Worker en Ajustes.

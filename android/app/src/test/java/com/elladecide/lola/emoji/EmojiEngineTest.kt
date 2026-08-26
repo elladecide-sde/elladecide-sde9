@@ -1,6 +1,7 @@
 package com.elladecide.lola.emoji
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EmojiEngineTest {
@@ -53,5 +54,33 @@ class EmojiEngineTest {
         EmojiCategory.entries.filter { it != EmojiCategory.RECENT }.forEach { cat ->
             assertEquals(false, EmojiData.byCategory(cat).isEmpty())
         }
+    }
+
+    @Test
+    fun `buscar filtra por nombre en todas las categorias`() {
+        val e = EmojiEngine()
+        e.selectCategory(EmojiCategory.FOOD)
+        e.buscar("corazón")
+        val glyphs = e.emojis().map { it.glyph }
+        assertTrue(glyphs.contains("❤️"))
+        // La búsqueda cruza la categoría actual.
+        assertTrue(glyphs.none { it == "🍎" })
+    }
+
+    @Test
+    fun `limpiar busqueda restaura la categoria`() {
+        val e = EmojiEngine()
+        e.selectCategory(EmojiCategory.FOOD)
+        e.buscar("corazón")
+        e.limpiarBusqueda()
+        assertEquals(EmojiData.byCategory(EmojiCategory.FOOD), e.emojis())
+    }
+
+    @Test
+    fun `busqueda vacia no altera la categoria`() {
+        val e = EmojiEngine()
+        e.selectCategory(EmojiCategory.SMILEYS)
+        e.buscar("")
+        assertEquals(EmojiData.byCategory(EmojiCategory.SMILEYS), e.emojis())
     }
 }

@@ -44,6 +44,12 @@
             android:name=".FolderPickerActivity"
             android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Pantalla de ajustes: BASE_URL, secret, modo de imágenes -->
+        <activity
+            android:name=".ConfigActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Material.NoActionBar" />
     </application>
 
 </manifest>

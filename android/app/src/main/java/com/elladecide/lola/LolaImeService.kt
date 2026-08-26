@@ -75,8 +75,8 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
             onSyncEditor = { session.syncEditor() },
             suggestionProvider = PrefixSuggestionProvider(PlaceholderWords.LIST),
         )
-        controller.suggestionsEnabled = getSharedPreferences("lola", Context.MODE_PRIVATE)
-            .getBoolean("suggestions_enabled", true)
+        controller.suggestionsEnabled = LolaPrefs.get(this)
+            .getBoolean(LolaPrefs.KEY_SUGGESTIONS_ENABLED, true)
         controller.cargar(database, applicationContext)
     }
 

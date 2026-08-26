@@ -14,6 +14,10 @@ class EmojiEngine {
     var category by mutableStateOf(EmojiCategory.SMILEYS)
         private set
 
+    /** Búsqueda activa por nombre (vacío = navegación por categorías). */
+    var query by mutableStateOf("")
+        private set
+
     private var recents by mutableStateOf<List<String>>(emptyList())
 
     /** Categorías visibles (RECENT primero, siempre). */
@@ -23,10 +27,20 @@ class EmojiEngine {
         category = c
     }
 
-    /** Emojis de la categoría actual (los recientes resueltos a [Emoji]). */
-    fun emojis(): List<Emoji> = when (category) {
-        EmojiCategory.RECENT -> recents.mapNotNull(EmojiData::find)
-        else -> EmojiData.byCategory(category)
+    /** Emojis visibles: resultados de búsqueda si hay query, o la categoría. */
+    fun emojis(): List<Emoji> =
+        if (query.isNotBlank()) EmojiData.search(query)
+        else when (category) {
+            EmojiCategory.RECENT -> recents.mapNotNull(EmojiData::resolve)
+            else -> EmojiData.byCategory(category)
+        }
+
+    fun buscar(q: String) {
+        query = q
+    }
+
+    fun limpiarBusqueda() {
+        query = ""
     }
 
     /** Registra un glifo como reciente (más reciente primero, sin duplicados). */

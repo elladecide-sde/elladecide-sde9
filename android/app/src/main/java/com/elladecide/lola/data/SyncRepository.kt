@@ -17,9 +17,10 @@ import java.net.URL
  *   2. si coincide con lo local → al día, 0 requests más
  *   3. si no → GET /sync?last_revision=N → aplicar deltas (upserts + borrados)
  *
- * BASE_URL: en el emulador, 10.0.2.2 apunta al localhost de la máquina.
- * En un dispositivo real o producción, poner la URL del Worker desplegado.
- * TODO: mover BASE_URL a una pantalla de configuración (settings activity).
+ * `baseUrl` y `secret` se configuran desde la pantalla de ajustes
+ * (ConfigActivity). Por defecto, en el emulador 10.0.2.2 apunta al localhost
+ * de la máquina. Si `secret` está seteado, se manda como `Authorization:
+ * Bearer <secret>` (para backend que proteja el sync).
  *
  * Errores: [SyncNetworkException] = backend inalcanzable/offline (esperable,
  * no es un bug); [SyncProtocolException] = el backend respondió mal (HTTP no
@@ -28,6 +29,8 @@ import java.net.URL
 class SyncRepository(
     private val productDao: ProductDao,
     private val metaDao: SyncMetaDao,
+    private val baseUrl: String = DEFAULT_BASE_URL,
+    private val secret: String? = null,
 ) {
     data class Resultado(val sincronizado: Boolean, val productos: Int, val borrados: Int)
 
@@ -59,12 +62,15 @@ class SyncRepository(
     }
 
     private fun getJson(path: String): JSONObject {
-        val conn = URL(BASE_URL + path).openConnection() as HttpURLConnection
+        val conn = URL(baseUrl + path).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "GET"
             conn.connectTimeout = 5000
             conn.readTimeout = 5000
             conn.setRequestProperty("Accept", "application/json")
+            if (!secret.isNullOrBlank()) {
+                conn.setRequestProperty("Authorization", "Bearer $secret")
+            }
             val code = conn.responseCode
             if (code !in 200..299) {
                 throw SyncProtocolException("HTTP $code en $path")
@@ -95,9 +101,9 @@ class SyncRepository(
         }
 
     companion object {
-        // Emulador Android → localhost de la máquina host.
-        // Producción: reemplazar por la URL real del Worker.
-        const val BASE_URL = "http://10.0.2.2:8787"
+        // Emulador Android → localhost de la máquina host. Se puede cambiar en
+        // ConfigActivity (pantalla de ajustes del teclado).
+        const val DEFAULT_BASE_URL = "http://10.0.2.2:8787"
     }
 }
 

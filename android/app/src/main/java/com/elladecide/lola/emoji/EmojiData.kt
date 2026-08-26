@@ -1,5 +1,7 @@
 package com.elladecide.lola.emoji
 
+import java.text.Normalizer
+
 /**
  * Catálogo curado de emojis (set acotado, no el dataset completo de Emoji2).
  * Sirve para las categorías del panel; los recientes se resuelven contra este
@@ -26,11 +28,11 @@ object EmojiData {
             Emoji("😅", "cara con sudor frío"), Emoji("😉", "cara guiñando"),
         ),
         EmojiCategory.PEOPLE to listOf(
-            Emoji("👍", "pulgar arriba"), Emoji("👎", "pulgar abajo"),
-            Emoji("👏", "aplauso"), Emoji("🙏", "manos en oración"),
-            Emoji("🤝", "apretón de manos"), Emoji("💪", "brazo flexionado"),
-            Emoji("👌", "gesto OK"), Emoji("✌️", "señal de victoria"),
-            Emoji("🤞", "dedos cruzados"), Emoji("👊", "puño"),
+            Emoji("👍", "pulgar arriba", skinTone = true), Emoji("👎", "pulgar abajo", skinTone = true),
+            Emoji("👏", "aplauso", skinTone = true), Emoji("🙏", "manos en oración", skinTone = true),
+            Emoji("🤝", "apretón de manos", skinTone = true), Emoji("💪", "brazo flexionado", skinTone = true),
+            Emoji("👌", "gesto OK", skinTone = true), Emoji("✌️", "señal de victoria", skinTone = true),
+            Emoji("🤞", "dedos cruzados", skinTone = true), Emoji("👊", "puño", skinTone = true),
             Emoji("🙂", "cara ligeramente sonriente"), Emoji("🙈", "mono tapándose los ojos"),
         ),
         EmojiCategory.ANIMALS to listOf(
@@ -100,4 +102,64 @@ object EmojiData {
     fun find(glyph: String): Emoji? = BY_CATEGORY.values.asSequence()
         .flatten()
         .firstOrNull { it.glyph == glyph }
+
+    /**
+     * Resuelve un glifo para mostrar en recientes: si es una variante con tono
+     * de piel (ej. "👍🏽") que no está en el catálogo, le quita el modificador
+     * y usa el emoji base para nombre/descripción (el glifo insertado se
+     * preserva tal cual).
+     */
+    fun resolve(glyph: String): Emoji? {
+        find(glyph)?.let { return it }
+        val base = SKIN_TONES.filter { it.isNotEmpty() }
+            .fold(glyph) { acc, mod -> acc.replace(mod, "") }
+        return find(base)
+    }
+
+    /** Todo el catálogo, sin duplicados. */
+    fun all(): List<Emoji> = BY_CATEGORY.values.flatten().distinctBy { it.glyph }
+
+    /**
+     * Búsqueda por nombre: tokens en cualquier orden, sin distinguir
+     * mayúsculas/acentos ("corazon roto" y "CORAZÓN ROTO" matchean igual).
+     */
+    fun search(query: String): List<Emoji> {
+        val tokens = tokenize(query)
+        if (tokens.isEmpty()) return emptyList()
+        return all().filter { e ->
+            val haystack = normalize(e.name)
+            tokens.all { haystack.contains(it) }
+        }
+    }
+
+    /**
+     * Variantes de tono de piel para un glifo (estilo Gboard): base + 5 tonos.
+     * Vacío si el emoji no soporta tonos.
+     */
+    fun skinToneVariants(glyph: String): List<String> {
+        val emoji = find(glyph) ?: return emptyList()
+        if (!emoji.skinTone) return emptyList()
+        return SKIN_TONES.map { modifier -> glyph + modifier }
+    }
+
+    private fun tokenize(q: String): List<String> = q
+        .lowercase()
+        .split(Regex("\\s+"))
+        .map(::normalize)
+        .filter { it.isNotEmpty() }
+
+    /** Normaliza a minúsculas sin acentos, para matchear "corazón" ↔ "corazon". */
+    private fun normalize(s: String): String = Normalizer
+        .normalize(s.lowercase(), Normalizer.Form.NFD)
+        .replace(Regex("\\p{Mn}+"), "")
+
+    /** Modificadores de tono de piel (Unicode): claro → oscuro. */
+    val SKIN_TONES = listOf(
+        "",                // base (sin tono)
+        "\uD83C\uDFFB",    // 🏻 claro
+        "\uD83C\uDFFC",    // 🏼 medio claro
+        "\uD83C\uDFFD",    // 🏽 medio
+        "\uD83C\uDFFE",    // 🏾 medio oscuro
+        "\uD83C\uDFFF",    // 🏿 oscuro
+    )
 }

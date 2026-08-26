@@ -75,6 +75,19 @@ class KeyboardController(
     var expandedCodigo by mutableStateOf<String?>(null)
     var imagenes by mutableStateOf<List<ImageEntry>>(emptyList())
 
+    /** UX: mostrar e insertar fotos de productos (configurable en Ajustes). */
+    var imagenesEnabled by mutableStateOf(true)
+
+    /** Switches de formato del mensaje (lectura LC/LL, concepto N/U, etc.). */
+    var pedidoConfig by mutableStateOf(PedidoConfig())
+
+    /** Descuento global (TODOS) o por ítem (MANUAL). */
+    var descuentoModo by mutableStateOf(DescuentoModo.TODOS)
+
+    /** Ítem en edición de descuento (modo MANUAL) + descuento pendiente. */
+    var editingCartIndex by mutableStateOf<Int?>(null)
+    var pendingDescuento by mutableStateOf(0)
+
     /** Modo de funcionamiento (CHAT = teclado normal, LOLA = catálogo). */
     var mode by mutableStateOf(KeyboardMode.CHAT)
         private set
@@ -130,19 +143,31 @@ class KeyboardController(
     /** Carga inicial: seed offline si está vacío + intento de sync best-effort. */
     fun cargar(db: LolaDatabase, appContext: Context) {
         this.appContext = appContext
-        val recents = appContext.getSharedPreferences("lola", Context.MODE_PRIVATE)
-            .getString(EMOJI_RECENTS_KEY, null)
-            ?.split(RECENTS_DELIMITER)
+        val prefs = LolaPrefs.get(appContext)
+        val recents = prefs.getString(LolaPrefs.KEY_EMOJI_RECENTS, null)
+            ?.split(LolaPrefs.RECENTS_DELIMITER)
             ?.filter { it.isNotEmpty() }
             ?: emptyList()
         emojiEngine.restoreRecents(recents)
+        pedidoConfig = PedidoConfig(
+            lectura = enumOf(Lectura.entries, prefs.getString(LolaPrefs.KEY_LECTURA, null), Lectura.LC),
+            concepto = enumOf(Concepto.entries, prefs.getString(LolaPrefs.KEY_CONCEPTO, null), Concepto.N),
+            textoDesc = prefs.getBoolean(LolaPrefs.KEY_TEXTO_DESC, true),
+            valorModo = enumOf(ValorModo.entries, prefs.getString(LolaPrefs.KEY_VALOR_MODO, null), ValorModo.LISTA),
+        )
+        descuentoModo = enumOf(DescuentoModo.entries, prefs.getString(LolaPrefs.KEY_DESCUENTO_MODO, null), DescuentoModo.TODOS)
         scope.launch {
             val count = withContext(Dispatchers.IO) { db.productDao().count() }
             if (count == 0) {
                 SeedCatalog.sembrar(appContext, db)
             }
             try {
-                SyncRepository(db.productDao(), db.syncMetaDao()).sync()
+                SyncRepository(
+                    db.productDao(),
+                    db.syncMetaDao(),
+                    baseUrl = prefs.getString(LolaPrefs.KEY_BASE_URL, null) ?: SyncRepository.DEFAULT_BASE_URL,
+                    secret = prefs.getString(LolaPrefs.KEY_SECRET, null),
+                ).sync()
             } catch (e: SyncProtocolException) {
                 // El backend respondió mal (HTTP no 2xx o JSON inválido): es un
                 // bug de contrato, NO se silencia. Se expone para que se vea.
@@ -172,10 +197,16 @@ class KeyboardController(
 
     fun removeFromCart(index: Int) {
         cart = cart.filterIndexed { i, _ -> i != index }
+        if (editingCartIndex == index) {
+            editingCartIndex = null
+            pendingDescuento = 0
+        }
     }
 
     fun limpiarCart() {
         cart = emptyList()
+        editingCartIndex = null
+        pendingDescuento = 0
         estado = "Pedido vacío"
     }
 
@@ -186,11 +217,94 @@ class KeyboardController(
     fun enviar() {
         if (cart.isEmpty()) return
         when (modo) {
-            ModoResultado.TEXTO -> onCommitText(Precio.buildMensaje(cart, descuento))
-            ModoResultado.PNG -> onCommitImage(PrecioPngRenderer.renderPedido(cart, descuento))
+            ModoResultado.TEXTO -> onCommitText(Precio.buildMensaje(cart, descuento, pedidoConfig))
+            ModoResultado.PNG -> onCommitImage(PrecioPngRenderer.renderPedido(cart, descuento, pedidoConfig))
         }
         cart = emptyList()
+        editingCartIndex = null
+        pendingDescuento = 0
         estado = "Pedido enviado — apretá Enviar en la app"
+    }
+
+    // ── Switches de formato (pedidoConfig) ──
+
+    fun setLectura(l: Lectura) {
+        pedidoConfig = pedidoConfig.copy(lectura = l)
+        persistirPedidoConfig()
+    }
+
+    fun setConcepto(c: Concepto) {
+        // U → N: todos los ítems vuelven a cantidad 1 (como la extensión).
+        if (pedidoConfig.concepto == Concepto.U && c == Concepto.N) {
+            cart = cart.map { it.copy(qty = 1) }
+        }
+        pedidoConfig = pedidoConfig.copy(concepto = c)
+        persistirPedidoConfig()
+    }
+
+    fun setTextoDesc(on: Boolean) {
+        pedidoConfig = pedidoConfig.copy(textoDesc = on)
+        persistirPedidoConfig()
+    }
+
+    fun setValorModo(v: ValorModo) {
+        pedidoConfig = pedidoConfig.copy(valorModo = v)
+        persistirPedidoConfig()
+    }
+
+    // ── Descuento TODOS / MANUAL ──
+
+    fun setDescuentoModo(m: DescuentoModo) {
+        // TODOS → MANUAL: cada ítem hereda el descuento global (como la extensión).
+        if (m == DescuentoModo.MANUAL && descuentoModo == DescuentoModo.TODOS) {
+            cart = cart.map { it.copy(descuento = descuento) }
+        }
+        // MANUAL → TODOS: se limpia el override por ítem para que el global
+        // vuelva a mandar (sin esto, descuentoEfectivo seguiría usando el
+        // valor individual "pegado").
+        if (m == DescuentoModo.TODOS && descuentoModo == DescuentoModo.MANUAL) {
+            cart = cart.map { it.copy(descuento = null) }
+        }
+        descuentoModo = m
+        editingCartIndex = null
+        pendingDescuento = 0
+        persistirPedidoConfig()
+    }
+
+    /** Empieza a editar el descuento individual de un ítem (modo MANUAL). */
+    fun editarItem(index: Int) {
+        editingCartIndex = index
+        pendingDescuento = cart.getOrNull(index)?.descuento ?: descuento
+    }
+
+    fun setPendingDescuento(v: Int) {
+        pendingDescuento = v
+    }
+
+    /** Aplica el descuento pendiente al ítem en edición ("Recalcular"). */
+    fun aplicarItemDescuento() {
+        val i = editingCartIndex ?: return
+        cart = cart.mapIndexed { idx, item -> if (idx == i) item.copy(descuento = pendingDescuento) else item }
+        editingCartIndex = null
+        pendingDescuento = 0
+    }
+
+    /** Ajusta la cantidad de un ítem (concepto U). Mínimo 1. */
+    fun cambiarCantidad(index: Int, delta: Int) {
+        cart = cart.mapIndexed { idx, item ->
+            if (idx == index) item.copy(qty = (item.qty + delta).coerceAtLeast(1)) else item
+        }
+    }
+
+    private fun persistirPedidoConfig() {
+        appContext?.getSharedPreferences(LolaPrefs.NAME, Context.MODE_PRIVATE)
+            ?.edit()
+            ?.putString(LolaPrefs.KEY_LECTURA, pedidoConfig.lectura.name)
+            ?.putString(LolaPrefs.KEY_CONCEPTO, pedidoConfig.concepto.name)
+            ?.putBoolean(LolaPrefs.KEY_TEXTO_DESC, pedidoConfig.textoDesc)
+            ?.putString(LolaPrefs.KEY_VALOR_MODO, pedidoConfig.valorModo.name)
+            ?.putString(LolaPrefs.KEY_DESCUENTO_MODO, descuentoModo.name)
+            ?.apply()
     }
 
     /**
@@ -279,9 +393,9 @@ class KeyboardController(
 
     /** Persiste los emojis recientes en SharedPreferences. */
     private fun persistirRecents() {
-        appContext?.getSharedPreferences("lola", Context.MODE_PRIVATE)
+        appContext?.getSharedPreferences(LolaPrefs.NAME, Context.MODE_PRIVATE)
             ?.edit()
-            ?.putString(EMOJI_RECENTS_KEY, emojiEngine.recentsList().joinToString(RECENTS_DELIMITER))
+            ?.putString(LolaPrefs.KEY_EMOJI_RECENTS, emojiEngine.recentsList().joinToString(LolaPrefs.RECENTS_DELIMITER))
             ?.apply()
     }
 
@@ -366,10 +480,22 @@ class KeyboardController(
         }
     }
 
+    /** Abre la pantalla de ajustes (BASE_URL, secret, modo de imágenes). */
+    fun abrirConfig(context: Context) {
+        val intent = Intent(context, ConfigActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            estado = "No se pudo abrir los ajustes"
+        }
+    }
+
     /** Relee la carpeta persistida y escanea (idempotente por URI). */
     fun rescanear(context: Context) {
-        val uriStr = context.getSharedPreferences("lola", Context.MODE_PRIVATE)
-            .getString("folder_uri", null) ?: return
+        val prefs = LolaPrefs.get(context)
+        imagenesEnabled = prefs.getBoolean(LolaPrefs.KEY_IMAGENES_ENABLED, true)
+        val uriStr = prefs.getString(LolaPrefs.KEY_FOLDER_URI, null) ?: return
         if (uriStr == lastScannedUri) return
         lastScannedUri = uriStr
         scope.launch {
@@ -380,7 +506,8 @@ class KeyboardController(
     }
 
     fun imagenDe(product: Product): ImageEntry? =
-        if (imagenes.isEmpty()) null else ImageRepository.buscar(product, imagenes).firstOrNull()
+        if (imagenes.isEmpty() || !imagenesEnabled) null
+        else ImageRepository.buscar(product, imagenes).firstOrNull()
 
     fun insertarImagen(product: Product) {
         val entry = imagenDe(product) ?: run {
@@ -391,9 +518,6 @@ class KeyboardController(
     }
 
     companion object {
-        private const val EMOJI_RECENTS_KEY = "emoji_recents"
-        private const val RECENTS_DELIMITER = ","
-
         /** Alturas de la ventana del IME en dp (adaptativas al viewport real). */
         const val CHAT_HEIGHT_DP = 272
         const val LOLA_COMPACT_HEIGHT_DP = 480
@@ -404,5 +528,9 @@ class KeyboardController(
          * fijos ni offsets mágicos, spec §14).
          */
         const val EXPANDED_FILL_DP = -1
+
+        /** Lee un enum de prefs con fallback (evita crash por valor corrupto). */
+        private fun <T : Enum<T>> enumOf(entries: List<T>, name: String?, default: T): T =
+            entries.firstOrNull { it.name == name } ?: default
     }
 }

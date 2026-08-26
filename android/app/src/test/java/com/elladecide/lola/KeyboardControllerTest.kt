@@ -1,5 +1,6 @@
 package com.elladecide.lola
 
+import com.elladecide.lola.data.Product
 import com.elladecide.lola.keyboard.Key
 import com.elladecide.lola.keyboard.KeyboardMode
 import com.elladecide.lola.keyboard.KeyboardSize
@@ -125,4 +126,46 @@ class KeyboardControllerTest {
         c.comprometerAlternativa("Á")
         assertEquals(true, c.keyEngine.shiftActive) // el bloqueo sigue activo
     }
+
+    // ── Descuento TODOS / MANUAL y cantidades (switches de buildLineParts) ──
+
+    @Test
+    fun `modo manual hereda el descuento global y al volver a todos lo limpia`() {
+        val c = controller()
+        c.addToCart(producto, 0)
+        c.setDescuentoModo(DescuentoModo.MANUAL)
+        assertEquals(15, c.cart[0].descuento) // heredó el global (default 15)
+        c.editarItem(0)
+        c.setPendingDescuento(20)
+        c.aplicarItemDescuento()
+        assertEquals(20, c.cart[0].descuento) // override individual aplicado
+        c.setDescuentoModo(DescuentoModo.TODOS)
+        assertEquals(null, c.cart[0].descuento) // limpio: vuelve a mandar el global
+    }
+
+    @Test
+    fun `descuento manual del item se refleja en el total`() {
+        val c = controller()
+        c.addToCart(producto, 0)
+        c.setDescuentoModo(DescuentoModo.MANUAL)
+        c.editarItem(0)
+        c.setPendingDescuento(20)
+        c.aplicarItemDescuento()
+        // base 1000 con 20% → 800 (y no el 15% global → 850)
+        assertEquals(800, c.totalEfectivo)
+    }
+
+    @Test
+    fun `pasar de concepto U a N resetea las cantidades`() {
+        val c = controller()
+        c.addToCart(producto, 0)
+        c.setConcepto(Concepto.U)
+        c.cambiarCantidad(0, 3) // 1 + 3 = 4
+        assertEquals(4, c.cart[0].qty)
+        c.setConcepto(Concepto.N)
+        assertEquals(1, c.cart[0].qty) // reset a 1 (como la extensión)
+    }
+
+    private val producto: Product =
+        Product.fromPrecios("TEST", "TEST 100", listOf(1000, 2000, 3000, 4000))
 }
