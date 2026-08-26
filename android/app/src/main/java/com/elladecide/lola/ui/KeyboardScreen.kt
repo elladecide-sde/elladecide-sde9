@@ -556,9 +556,9 @@ private fun SeccionDescuento(controller: KeyboardController) {
     val manual = controller.descuentoModo == DescuentoModo.MANUAL
     Column(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            FormatoSwitch("TODOS", !manual) { controller.setDescuentoModo(DescuentoModo.TODOS) }
+            FormatoSwitch("TODOS", !manual) { controller.cambiarDescuentoModo(DescuentoModo.TODOS) }
             Spacer(Modifier.width(4.dp))
-            FormatoSwitch("MANUAL", manual) { controller.setDescuentoModo(DescuentoModo.MANUAL) }
+            FormatoSwitch("MANUAL", manual) { controller.cambiarDescuentoModo(DescuentoModo.MANUAL) }
             Spacer(Modifier.width(8.dp))
             if (!manual) {
                 OpcionesDescuento(
@@ -586,7 +586,7 @@ private fun SeccionDescuento(controller: KeyboardController) {
                 )
                 OpcionesDescuento(
                     values = controller.pendingDescuento,
-                    onSelect = controller::setPendingDescuento,
+                    onSelect = controller::seleccionarDescuentoPendiente,
                 )
             }
         }

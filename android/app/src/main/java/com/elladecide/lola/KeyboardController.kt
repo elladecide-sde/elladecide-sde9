@@ -254,7 +254,7 @@ class KeyboardController(
 
     // ── Descuento TODOS / MANUAL ──
 
-    fun setDescuentoModo(m: DescuentoModo) {
+    fun cambiarDescuentoModo(m: DescuentoModo) {
         // TODOS → MANUAL: cada ítem hereda el descuento global (como la extensión).
         if (m == DescuentoModo.MANUAL && descuentoModo == DescuentoModo.TODOS) {
             cart = cart.map { it.copy(descuento = descuento) }
@@ -277,7 +277,7 @@ class KeyboardController(
         pendingDescuento = cart.getOrNull(index)?.descuento ?: descuento
     }
 
-    fun setPendingDescuento(v: Int) {
+    fun seleccionarDescuentoPendiente(v: Int) {
         pendingDescuento = v
     }
 

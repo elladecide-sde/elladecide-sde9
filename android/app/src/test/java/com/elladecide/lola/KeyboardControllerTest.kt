@@ -1,4 +1,4 @@
-package com.elladecide.lola
+﻿package com.elladecide.lola
 
 import com.elladecide.lola.data.Product
 import com.elladecide.lola.keyboard.Key
@@ -12,9 +12,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * Transiciones de estado del modo de teclado (spec F3 §19): CHAT ↔ LOLA,
- * COMPACT ↔ EXPANDED, y la sincronización del editor al cambiar de modo (que
- * evita el texto "colgado" en composición al volver a Chat).
+ * Transiciones de estado del modo de teclado (spec F3 Â§19): CHAT â†” LOLA,
+ * COMPACT â†” EXPANDED, y la sincronizaciÃ³n del editor al cambiar de modo (que
+ * evita el texto "colgado" en composiciÃ³n al volver a Chat).
  */
 class KeyboardControllerTest {
 
@@ -111,11 +111,11 @@ class KeyboardControllerTest {
             onSyncEditor = {},
             suggestionProvider = PrefixSuggestionProvider(PlaceholderWords.LIST),
         )
-        c.press(Key.SHIFT) // shift temporal (una mayúscula)
+        c.press(Key.SHIFT) // shift temporal (una mayÃºscula)
         assertEquals(true, c.keyEngine.shiftActive)
-        c.comprometerAlternativa("Á") // alternativa ya capitalizada por el motor
-        assertEquals("Á", escrito)
-        assertEquals(false, c.keyEngine.shiftActive) // shift consumido (spec §12)
+        c.comprometerAlternativa("Ã") // alternativa ya capitalizada por el motor
+        assertEquals("Ã", escrito)
+        assertEquals(false, c.keyEngine.shiftActive) // shift consumido (spec Â§12)
     }
 
     @Test
@@ -123,23 +123,23 @@ class KeyboardControllerTest {
         val c = controller()
         c.fijarShift() // BLOQUEO
         assertEquals(true, c.keyEngine.shiftActive)
-        c.comprometerAlternativa("Á")
+        c.comprometerAlternativa("Ã")
         assertEquals(true, c.keyEngine.shiftActive) // el bloqueo sigue activo
     }
 
-    // ── Descuento TODOS / MANUAL y cantidades (switches de buildLineParts) ──
+    // â”€â”€ Descuento TODOS / MANUAL y cantidades (switches de buildLineParts) â”€â”€
 
     @Test
     fun `modo manual hereda el descuento global y al volver a todos lo limpia`() {
         val c = controller()
         c.addToCart(producto, 0)
-        c.setDescuentoModo(DescuentoModo.MANUAL)
-        assertEquals(15, c.cart[0].descuento) // heredó el global (default 15)
+        c.cambiarDescuentoModo(DescuentoModo.MANUAL)
+        assertEquals(15, c.cart[0].descuento) // heredÃ³ el global (default 15)
         c.editarItem(0)
-        c.setPendingDescuento(20)
+        c.seleccionarDescuentoPendiente(20)
         c.aplicarItemDescuento()
         assertEquals(20, c.cart[0].descuento) // override individual aplicado
-        c.setDescuentoModo(DescuentoModo.TODOS)
+        c.cambiarDescuentoModo(DescuentoModo.TODOS)
         assertEquals(null, c.cart[0].descuento) // limpio: vuelve a mandar el global
     }
 
@@ -147,11 +147,11 @@ class KeyboardControllerTest {
     fun `descuento manual del item se refleja en el total`() {
         val c = controller()
         c.addToCart(producto, 0)
-        c.setDescuentoModo(DescuentoModo.MANUAL)
+        c.cambiarDescuentoModo(DescuentoModo.MANUAL)
         c.editarItem(0)
-        c.setPendingDescuento(20)
+        c.seleccionarDescuentoPendiente(20)
         c.aplicarItemDescuento()
-        // base 1000 con 20% → 800 (y no el 15% global → 850)
+        // base 1000 con 20% â†’ 800 (y no el 15% global â†’ 850)
         assertEquals(800, c.totalEfectivo)
     }
 
@@ -163,7 +163,7 @@ class KeyboardControllerTest {
         c.cambiarCantidad(0, 3) // 1 + 3 = 4
         assertEquals(4, c.cart[0].qty)
         c.setConcepto(Concepto.N)
-        assertEquals(1, c.cart[0].qty) // reset a 1 (como la extensión)
+        assertEquals(1, c.cart[0].qty) // reset a 1 (como la extensiÃ³n)
     }
 
     private val producto: Product =
