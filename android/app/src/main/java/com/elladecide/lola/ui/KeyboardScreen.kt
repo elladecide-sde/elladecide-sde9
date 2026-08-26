@@ -135,7 +135,13 @@ fun KeyboardScreen(controller: KeyboardController) {
         BoxWithConstraints(
             Modifier.fillMaxWidth().fillMaxHeight().background(LolaBg),
         ) {
+            // Propiedades del BoxWithConstraintsScope (única fuente del tamaño
+            // real del viewport del IME). Se leen directamente acá para que la
+            // inspección de Compose vea el uso del scope (las lecturas dentro de
+            // `with(density) { }` no se rastrean) y la resolución quede explícita.
             val availableHeight = maxHeight.value
+            val viewportMaxWidth = maxWidth
+            val viewportMaxHeight = maxHeight
             // FUENTE DE VERDAD ÚNICA: `availableForKeyboard` es el presupuesto
             // que el teclado reclama y sobre el que `compute()` dimensiona las
             // teclas; el panel de catálogo recibe `panelHeight` explícito (sin
@@ -157,8 +163,8 @@ fun KeyboardScreen(controller: KeyboardController) {
             val metrics = remember(availableForKeyboard, density.fontScale) {
                 KeyboardMetrics.compute(availableForKeyboard, density.fontScale)
             }
-            val viewportW = with(density) { maxWidth.toPx() }
-            val viewportH = with(density) { maxHeight.toPx() }
+            val viewportW = with(density) { viewportMaxWidth.toPx() }
+            val viewportH = with(density) { viewportMaxHeight.toPx() }
 
             ContenidoTeclado(
                 controller = controller,
