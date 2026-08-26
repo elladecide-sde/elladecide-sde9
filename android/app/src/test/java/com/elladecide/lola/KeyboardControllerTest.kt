@@ -1,5 +1,6 @@
 package com.elladecide.lola
 
+import com.elladecide.lola.keyboard.Key
 import com.elladecide.lola.keyboard.KeyboardMode
 import com.elladecide.lola.keyboard.KeyboardSize
 import com.elladecide.lola.language.PlaceholderWords
@@ -87,5 +88,41 @@ class KeyboardControllerTest {
         assertEquals(true, c.expandida)
         c.toggleModo() // sale de LOLA
         assertEquals(false, c.expandida)
+    }
+
+    @Test
+    fun `comprometerAlternativa consume el shift temporal y commitea`() {
+        var escrito = ""
+        val c = KeyboardController(
+            scope = CoroutineScope(Dispatchers.Unconfined),
+            onCommitText = {},
+            onCommitImage = {},
+            onCommitImageFile = {},
+            onDelete = {},
+            onEnter = {},
+            onMoveCursor = {},
+            onCambiarAltura = {},
+            onTypeText = { escrito += it },
+            onReplaceComposing = {},
+            onUndo = {},
+            onCurrentWord = { "" },
+            onDeleteWord = {},
+            onSyncEditor = {},
+            suggestionProvider = PrefixSuggestionProvider(PlaceholderWords.LIST),
+        )
+        c.press(Key.SHIFT) // shift temporal (una mayúscula)
+        assertEquals(true, c.keyEngine.shiftActive)
+        c.comprometerAlternativa("Á") // alternativa ya capitalizada por el motor
+        assertEquals("Á", escrito)
+        assertEquals(false, c.keyEngine.shiftActive) // shift consumido (spec §12)
+    }
+
+    @Test
+    fun `comprometerAlternativa no toca el bloqueo de mayusculas`() {
+        val c = controller()
+        c.fijarShift() // BLOQUEO
+        assertEquals(true, c.keyEngine.shiftActive)
+        c.comprometerAlternativa("Á")
+        assertEquals(true, c.keyEngine.shiftActive) // el bloqueo sigue activo
     }
 }

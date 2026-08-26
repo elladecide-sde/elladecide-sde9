@@ -48,14 +48,10 @@ class KeyboardMetricsTest {
     }
 
     @Test
-    fun `el presupuesto maximo del shell da teclas al tope`() {
-        val m = KeyboardMetrics.compute(KeyboardMetrics.MAX_KEY_BODY_DP, 1f)
-        assertEquals(KeyboardMetrics.MAX_KEY_HEIGHT_DP, m.keyHeightDp, 0.01f)
-    }
-
-    @Test
-    fun `el shell maximo nunca es menor que el minimo`() {
-        assertTrue(KeyboardMetrics.MAX_KEY_BODY_DP >= KeyboardMetrics.MIN_KEY_BODY_DP)
+    fun `el panel minimo cubre los controles fijos del catalogo`() {
+        // Buscador (~56) + fila de acciones (~40) + barra ENVIAR (~48) +
+        // espaciados (~12) + padding del panel (2*spacing).
+        assertTrue(KeyboardMetrics.PANEL_MIN_DP >= 168f)
         assertTrue(KeyboardMetrics.PANEL_MIN_DP > 0f)
     }
 

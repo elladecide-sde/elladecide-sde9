@@ -141,13 +141,14 @@ fun KeyboardScreen(controller: KeyboardController) {
             // teclas; el panel de catálogo recibe `panelHeight` explícito (sin
             // weight), así NO compite por espacio con el teclado (spec §17).
             //
-            // En modo LOLA el teclado quiere hasta su máximo cómodo
-            // (MAX_KEY_BODY_DP); el panel toma el excedente. Si el viewport es
-            // chico, el panel se achica hasta PANEL_MIN_DP y el teclado encoge
-            // sus teclas vía `compute()`. En CHAT no hay panel: el teclado usa
-            // todo el alto.
+            // En modo LOLA el teclado se queda en su mínimo cómodo
+            // (MIN_KEY_BODY_DP): solo escribe la búsqueda; el protagonista es el
+            // catálogo, que toma todo el resto. Si el viewport es chico, el panel
+            // baja hasta PANEL_MIN_DP (controles esenciales siempre accesibles,
+            // spec §15) y el teclado encoge sus teclas vía `compute()`. En CHAT
+            // no hay panel: el teclado usa todo el alto.
             val panelHeight = if (controller.enModoLola) {
-                (availableHeight - KeyboardMetrics.MAX_KEY_BODY_DP)
+                (availableHeight - KeyboardMetrics.MIN_KEY_BODY_DP)
                     .coerceAtLeast(KeyboardMetrics.PANEL_MIN_DP)
             } else {
                 0f
@@ -365,6 +366,7 @@ private fun FilasTeclado(
                         viewportW = viewportW,
                         viewportH = viewportH,
                         popupController = popupController,
+                        onComprometerAlternativa = { controller.comprometerAlternativa(it) },
                     )
                 }
             }

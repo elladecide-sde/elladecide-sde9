@@ -56,18 +56,12 @@ data class KeyboardMetrics(
         const val MIN_KEY_BODY_DP =
             STRIP_HEIGHT_DP + OVERHEAD_KEY_BODY_DP + TOTAL_ROWS * MIN_KEY_HEIGHT_DP
 
-        /** Alto máximo cómodo del SHELL: strip + 4 filas a [MAX_KEY_HEIGHT_DP] +
-         * padding + espaciados. Es lo que el teclado reclama cuando hay espacio
-         * de sobra; el panel de catálogo toma solo el excedente por encima de
-         * este tope (spec F3: el teclado se adapta, no queda al piso).
+        /** Alto mínimo reservado al panel de catálogo en modo LOLA. Cubre sus
+         * controles fijos (buscador + fila de acciones + barra ENVIAR) para que
+         * nunca queden inaccesibles (spec §15); el área de resultados se comprime
+         * y scrollea, y el teclado encoge sus teclas vía `compute()`.
          */
-        const val MAX_KEY_BODY_DP =
-            STRIP_HEIGHT_DP + OVERHEAD_KEY_BODY_DP + TOTAL_ROWS * MAX_KEY_HEIGHT_DP
-
-        /** Alto mínimo reservado al panel de catálogo en modo LOLA. Garantiza
-         * que el panel nunca desaparezca y que el teclado no invada su zona.
-         */
-        const val PANEL_MIN_DP = 120f
+        const val PANEL_MIN_DP = 168f
 
         /**
          * Calcula las métricas para [availableHeightDp] (alto real de la ventana
