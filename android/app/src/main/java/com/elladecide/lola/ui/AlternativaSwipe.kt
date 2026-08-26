@@ -1,8 +1,8 @@
 package com.elladecide.lola.ui
 
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerInputChange
-import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
@@ -20,6 +20,10 @@ import com.elladecide.lola.keyboard.PopupPositioner
  * del gesto: abre el popup posicionado sobre la tecla/celda, sigue el dedo,
  * resalta la alternativa y al levantar el dedo devuelve la seleccionada.
  *
+ * Es una extensión de [AwaitPointerEventScope] (el scope restringido que
+ * provee [androidx.compose.ui.input.pointer.awaitEachGesture]), igual que
+ * `awaitFirstDown`, para poder invocar `awaitPointerEvent()`.
+ *
  * - [PopupSwipeOutcome.Cancelado]: Back/gesto cancelado → el llamador no hace
  *   nada (evita commits fantasma, spec §8).
  * - [PopupSwipeOutcome.SinSeleccion]: el dedo se levantó sin elegir → el
@@ -32,7 +36,7 @@ internal sealed class PopupSwipeOutcome {
     data class Seleccionada(val valor: String) : PopupSwipeOutcome()
 }
 
-internal suspend fun PointerInputScope.seleccionarAlternativa(
+internal suspend fun AwaitPointerEventScope.seleccionarAlternativa(
     down: PointerInputChange,
     posPx: Offset,
     sizePx: IntSize,

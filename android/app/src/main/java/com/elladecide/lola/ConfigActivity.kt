@@ -33,6 +33,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.elladecide.lola.data.SyncRepository
 
 private val ConfigBg = Color(0xFF1F2C34)
 private val ConfigSurface = Color(0xFF2A3942)
