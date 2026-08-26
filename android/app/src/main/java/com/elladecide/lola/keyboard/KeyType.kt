@@ -16,4 +16,8 @@ enum class KeyType {
     LEFT,
     RIGHT,
     UNDO,
+    COMMA,
+    DOT,
+    TOOLS,
+    BACK,
 }

@@ -79,9 +79,17 @@ import com.elladecide.lola.data.ImageEntry
 import com.elladecide.lola.data.Product
 import com.elladecide.lola.emoji.EmojiCategory
 import com.elladecide.lola.keyboard.AutoRepeat
-import com.elladecide.lola.keyboard.KeyboardMetrics
-import com.elladecide.lola.keyboard.KeyType
+import com.elladecide.lola.keyboard.Key
 import com.elladecide.lola.keyboard.KeyboardLayer
+import com.elladecide.lola.keyboard.KeyboardMetrics
+import com.elladecide.lola.keyboard.KeyboardMode
+import com.elladecide.lola.keyboard.KeyboardSize
+import com.elladecide.lola.keyboard.KeyType
+import com.elladecide.lola.keyboard.PopupController
+import com.elladecide.lola.keyboard.PopupGeometry
+import com.elladecide.lola.keyboard.PopupGesture
+import com.elladecide.lola.keyboard.PopupInfo
+import com.elladecide.lola.keyboard.PopupPositioner
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 import kotlin.math.floor
@@ -123,40 +131,40 @@ private const val SWIPE_LEFT = 2
 fun KeyboardScreen(controller: KeyboardController) {
     val context = LocalContext.current
     val density = LocalDensity.current
-    var popup by remember { mutableStateOf<PopupInfo?>(null) }
+    // El popup vive en el controller (nivel IME) para que el servicio lo cierre
+    // con el Back físico/software (spec §8B); la UI solo lo observa.
+    val popupController = controller.popupController
     MaterialTheme(colorScheme = LolaColors) {
         BoxWithConstraints(
             Modifier.fillMaxWidth().fillMaxHeight().background(LolaBg),
         ) {
-            // Las métricas se recalculan solo si cambia el alto real de la
-            // ventana, el font scale o la visibilidad de la barra de sugerencias
-            // (no en cada recomposición). La barra resta del alto disponible para
-            // que las teclas se encojan adaptativamente en vez de desbordar.
             val availableHeight = maxHeight.value
-            val showSuggestions = controller.sugerenciasVisibles
-            val metrics = remember(availableHeight, density.fontScale, showSuggestions) {
-                val heightForKeys = if (showSuggestions) {
-                    availableHeight - KeyboardMetrics.SUGGESTION_BAR_HEIGHT_DP
-                } else {
-                    availableHeight
-                }
-                KeyboardMetrics.compute(heightForKeys, density.fontScale)
+            val showNumberRow = controller.capa == KeyboardLayer.LETTERS
+            // En modo LOLA el panel de catálogo (weight(1f)) se lleva el espacio
+            // por encima del shell mínimo del teclado; las métricas se calculan
+            // sobre lo que queda, así las teclas nunca desbordan ni se recortan
+            // (spec §4). El panel usa padding vertical propio en vez de spacers.
+            val panelMin = if (controller.enModoLola) {
+                (availableHeight - KeyboardMetrics.MIN_KEY_BODY_DP).coerceAtLeast(0f)
+            } else {
+                0f
             }
+            val availableForKeyboard = (availableHeight - panelMin).coerceAtLeast(0f)
+            val metrics = remember(availableForKeyboard, density.fontScale, showNumberRow) {
+                KeyboardMetrics.compute(availableForKeyboard, density.fontScale, showNumberRow)
+            }
+            val viewportW = with(density) { maxWidth.toPx() }
+            val viewportH = with(density) { maxHeight.toPx() }
+
             ContenidoTeclado(
                 controller = controller,
                 context = context,
                 metrics = metrics,
-                onPopupMostrar = { popup = it },
-                onPopupSeleccion = { popup = popup?.copy(seleccion = it) },
-                onPopupCerrar = { seleccion ->
-                    val info = popup
-                    if (info != null && seleccion >= 0) {
-                        controller.comprometerAlternativa(info.alternativas[seleccion])
-                    }
-                    popup = null
-                },
+                viewportW = viewportW,
+                viewportH = viewportH,
+                popupController = popupController,
             )
-            popup?.let { PopupAlternativas(it, metrics) }
+            popupController.info?.let { PopupAlternativas(it) }
         }
     }
 }
@@ -166,9 +174,9 @@ private fun ContenidoTeclado(
     controller: KeyboardController,
     context: android.content.Context,
     metrics: KeyboardMetrics,
-    onPopupMostrar: (PopupInfo) -> Unit,
-    onPopupSeleccion: (Int) -> Unit,
-    onPopupCerrar: (Int) -> Unit,
+    viewportW: Float,
+    viewportH: Float,
+    popupController: PopupController,
 ) {
     Column(
         modifier = Modifier
@@ -176,101 +184,42 @@ private fun ContenidoTeclado(
             .fillMaxHeight()
             .padding(metrics.screenPaddingDp.dp),
     ) {
-        if (controller.expandida) {
-            Spacer(Modifier.height(metrics.spacingDp.dp))
+        // Cinta superior con geometría estable: en CHAT muestra herramientas o
+        // sugerencias (una u otra, sin desplazar el teclado); en LOLA la cinta
+        // propia (Modo Chat + Expandir).
+        if (controller.enModoLola) {
+            ToolbarLola(controller)
+        } else if (controller.sugerenciasVisibles) {
+            BarraSugerencias(controller)
+        } else {
+            ToolbarChat(controller)
+        }
 
-            // Buscador (el QWERTY lo alimenta; no abre el IME propio).
-            OutlinedTextField(
-                value = controller.query,
-                onValueChange = {},
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Buscar producto…", color = LolaMuted) },
-                singleLine = true,
-                readOnly = true,
+        // Modo LOLA: el catálogo ocupa el área intermedia (padding vertical
+        // propio), el teclado queda abajo con el presupuesto que le corresponde.
+        if (controller.enModoLola) {
+            PanelLola(
+                controller,
+                context,
+                Modifier
+                    .weight(1f)
+                    .padding(vertical = metrics.spacingDp.dp),
             )
-
-            Spacer(Modifier.height(metrics.spacingDp.dp))
-
-            // Carpeta de imágenes · descuento · modo
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                TextButton(onClick = { controller.elegirCarpeta(context) }) {
-                    Text(
-                        text = if (controller.imagenes.isEmpty()) "📂" else "📂 ${controller.imagenes.size}",
-                        color = LolaAccent,
-                    )
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Precio.DESCUENTOS.forEach { d ->
-                        TextButton(onClick = { controller.descuento = d }) {
-                            Text(
-                                text = if (d == 0) "Sin" else "-$d%",
-                                color = if (controller.descuento == d) LolaAccent else LolaMuted,
-                            )
-                        }
-                    }
-                }
-                TextButton(onClick = controller::toggleModo) {
-                    val label = if (controller.modo == ModoResultado.TEXTO) "TEXTO" else "PNG"
-                    Text("PRECIOS → $label", color = LolaAccent)
-                }
-            }
-
-            Spacer(Modifier.height(metrics.spacingDp.dp))
-
-            // Área principal: resultados o carrito.
-            if (controller.query.isNotBlank()) {
-                Resultados(controller, Modifier.weight(1f))
-            } else {
-                Carrito(controller, Modifier.weight(1f))
-            }
-
-            Spacer(Modifier.height(metrics.spacingDp.dp + 2.dp))
-
-            // Barra inferior: estado + total + enviar.
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(controller.estado, color = LolaMuted)
-                    if (controller.cart.isNotEmpty()) {
-                        Text(
-                            "Total: ${Mensaje.fmt(controller.totalEfectivo)} EFEC/TRAN",
-                            color = LolaAccent,
-                        )
-                    }
-                }
-                TextButton(
-                    onClick = controller::limpiarCart,
-                    enabled = controller.cart.isNotEmpty(),
-                ) { Text("Limpiar", color = LolaMuted) }
-                Button(
-                    onClick = controller::enviar,
-                    enabled = controller.cart.isNotEmpty(),
-                ) { Text("ENVIAR") }
-            }
         }
 
         if (controller.capa == KeyboardLayer.EMOJI) {
             EmojiPanel(controller, Modifier.weight(1f))
         } else {
-            if (!controller.expandida) {
-                Spacer(Modifier.weight(1f))
-            }
-            if (controller.sugerenciasVisibles) {
-                BarraSugerencias(controller)
+            if (controller.capa == KeyboardLayer.LETTERS) {
+                FilaNumerica(controller, metrics)
+                Spacer(Modifier.height(metrics.spacingDp.dp))
             }
             FilasTeclado(
                 controller = controller,
                 metrics = metrics,
-                onPopupMostrar = onPopupMostrar,
-                onPopupSeleccion = onPopupSeleccion,
-                onPopupCerrar = onPopupCerrar,
+                viewportW = viewportW,
+                viewportH = viewportH,
+                popupController = popupController,
             )
         }
 
@@ -280,16 +229,115 @@ private fun ContenidoTeclado(
     }
 }
 
-// ── Teclado QWERTY (render a partir del KeyEngine) ─────────────────────────
+// ── Cinta superior ──────────────────────────────────────────────────────────
+
+/** Herramientas del modo CHAT (cuando no hay sugerencias que mostrar). */
+@Composable
+private fun ToolbarChat(controller: KeyboardController) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(KeyboardMetrics.STRIP_HEIGHT_DP.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ToolbarButton("123", "Números y símbolos", controller.capa == KeyboardLayer.SYMBOLS) {
+            controller.press(Key.LAYER)
+        }
+        ToolbarButton("😀", "Emojis", controller.capa == KeyboardLayer.EMOJI) {
+            controller.press(Key.EMOJI)
+        }
+        ToolbarButton("≡", "Herramientas", controller.capa == KeyboardLayer.AUX) {
+            controller.press(Key.TOOLS)
+        }
+        Spacer(Modifier.weight(1f))
+        ToolbarButton("LOLA", "Modo LOLA", controller.enModoLola) {
+            controller.press(Key.LOLA)
+        }
+    }
+}
+
+/** Cinta estable del modo LOLA: volver a Chat + expandir/contraer. */
+@Composable
+private fun ToolbarLola(controller: KeyboardController) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(KeyboardMetrics.STRIP_HEIGHT_DP.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ToolbarButton("Modo Chat", "Volver al teclado normal", false) { controller.toggleModo() }
+        Spacer(Modifier.weight(1f))
+        ToolbarButton(
+            if (controller.expandida) "Contraer" else "Expandir",
+            "Cambiar el tamaño del teclado LOLA",
+            controller.expandida,
+        ) { controller.toggleExpandir() }
+    }
+}
+
+@Composable
+private fun ToolbarButton(text: String, desc: String, active: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (active) LolaAccent else LolaSurface)
+            .clickable(onClick = onClick)
+            .semantics {
+                contentDescription = desc
+                role = Role.Button
+                onClick(label = desc) { onClick(); true }
+            }
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text,
+            color = if (active) Color.Black else LolaText,
+            fontWeight = FontWeight.Bold,
+            fontSize = 13.sp,
+            maxLines = 1,
+        )
+    }
+}
+
+// ── Fila numérica ───────────────────────────────────────────────────────────
+
+@Composable
+private fun FilaNumerica(controller: KeyboardController, metrics: KeyboardMetrics) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(KeyboardMetrics.NUMBER_ROW_HEIGHT_DP.dp),
+        horizontalArrangement = Arrangement.spacedBy(metrics.spacingDp.dp),
+    ) {
+        controller.filaNumerica().forEach { tecla ->
+            Tecla(
+                label = controller.etiqueta(tecla),
+                descripcion = controller.descripcion(tecla),
+                descripcionEstado = controller.descripcionEstado(tecla),
+                modifier = Modifier.weight(controller.peso(tecla)),
+                acento = false,
+                activo = controller.esActiva(tecla),
+                onTap = { controller.press(tecla) },
+                metrics = metrics,
+            )
+        }
+    }
+}
+
+// ── Sugerencias (solo modo CHAT) ────────────────────────────────────────────
 
 @Composable
 private fun BarraSugerencias(controller: KeyboardController) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(KeyboardMetrics.SUGGESTION_BAR_HEIGHT_DP.dp)
+            .height(KeyboardMetrics.STRIP_HEIGHT_DP.dp)
             .padding(bottom = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         controller.suggestions.forEach { palabra ->
             Text(
@@ -309,13 +357,15 @@ private fun BarraSugerencias(controller: KeyboardController) {
     }
 }
 
+// ── Teclado (cuerpo de capa) ────────────────────────────────────────────────
+
 @Composable
 private fun FilasTeclado(
     controller: KeyboardController,
     metrics: KeyboardMetrics,
-    onPopupMostrar: (PopupInfo) -> Unit,
-    onPopupSeleccion: (Int) -> Unit,
-    onPopupCerrar: (Int) -> Unit,
+    viewportW: Float,
+    viewportH: Float,
+    popupController: PopupController,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(metrics.spacingDp.dp)) {
         controller.teclasActuales().forEach { fila ->
@@ -338,9 +388,9 @@ private fun FilasTeclado(
                         onSwipeLeft = if (tecla.type == KeyType.BACKSPACE) ({ controller.borrarPalabra() }) else null,
                         onTap = { controller.press(tecla) },
                         metrics = metrics,
-                        onPopupMostrar = onPopupMostrar,
-                        onPopupSeleccion = onPopupSeleccion,
-                        onPopupCerrar = onPopupCerrar,
+                        viewportW = viewportW,
+                        viewportH = viewportH,
+                        popupController = popupController,
                     )
                 }
             }
@@ -369,6 +419,95 @@ private fun FilaInferior(controller: KeyboardController, metrics: KeyboardMetric
         }
     }
 }
+
+// ── Panel LOLA (catálogo) ───────────────────────────────────────────────────
+
+@Composable
+private fun PanelLola(
+    controller: KeyboardController,
+    context: android.content.Context,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        // Buscador (el QWERTY lo alimenta; no abre el IME propio).
+        OutlinedTextField(
+            value = controller.query,
+            onValueChange = {},
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("Buscar producto…", color = LolaMuted) },
+            singleLine = true,
+            readOnly = true,
+        )
+
+        Spacer(Modifier.height(4.dp))
+
+        // Carpeta de imágenes · descuento · modo
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            TextButton(onClick = { controller.elegirCarpeta(context) }) {
+                Text(
+                    text = if (controller.imagenes.isEmpty()) "📂" else "📂 ${controller.imagenes.size}",
+                    color = LolaAccent,
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Precio.DESCUENTOS.forEach { d ->
+                    TextButton(onClick = { controller.descuento = d }) {
+                        Text(
+                            text = if (d == 0) "Sin" else "-$d%",
+                            color = if (controller.descuento == d) LolaAccent else LolaMuted,
+                        )
+                    }
+                }
+            }
+            TextButton(onClick = controller::toggleModoResultado) {
+                val label = if (controller.modo == ModoResultado.TEXTO) "TEXTO" else "PNG"
+                Text("PRECIOS → $label", color = LolaAccent)
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        // Área principal: resultados o carrito.
+        if (controller.query.isNotBlank()) {
+            Resultados(controller, Modifier.weight(1f))
+        } else {
+            Carrito(controller, Modifier.weight(1f))
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        // Barra inferior: estado + total + enviar.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(controller.estado, color = LolaMuted)
+                if (controller.cart.isNotEmpty()) {
+                    Text(
+                        "Total: ${Mensaje.fmt(controller.totalEfectivo)} EFEC/TRAN",
+                        color = LolaAccent,
+                    )
+                }
+            }
+            TextButton(
+                onClick = controller::limpiarCart,
+                enabled = controller.cart.isNotEmpty(),
+            ) { Text("Limpiar", color = LolaMuted) }
+            Button(
+                onClick = controller::enviar,
+                enabled = controller.cart.isNotEmpty(),
+            ) { Text("ENVIAR") }
+        }
+    }
+}
+
+// ── Panel de emojis ─────────────────────────────────────────────────────────
 
 @Composable
 private fun EmojiPanel(controller: KeyboardController, modifier: Modifier = Modifier) {
@@ -433,27 +572,13 @@ private fun EmojiPanel(controller: KeyboardController, modifier: Modifier = Modi
 
 // ── Popup de alternativas (long-press) ─────────────────────────────────────
 
-private data class PopupInfo(
-    val alternativas: List<String>,
-    val centerX: Int,
-    val topY: Int,
-    val seleccion: Int = -1,
-)
-
 @Composable
-private fun PopupAlternativas(info: PopupInfo, metrics: KeyboardMetrics) {
-    val density = LocalDensity.current
-    val celdaPx = with(density) { metrics.popupCellDp.dp.toPx() }
-    val altoPx = with(density) { metrics.popupHeightDp.dp.toPx() }
-    val teclaAltoPx = with(density) { metrics.keyHeightDp.dp.toPx() }
-    val left = (info.centerX - (celdaPx * info.alternativas.size) / 2).toInt()
-    val top = (if (info.topY - altoPx >= 0) info.topY - altoPx else info.topY + teclaAltoPx).toInt()
-    // Escala de aparición del popup (no interfiere con la selección por dedo).
+private fun PopupAlternativas(info: PopupInfo) {
     val scale = remember { Animatable(0.8f) }
     LaunchedEffect(Unit) { scale.animateTo(1f, tween(120)) }
     Box(
         modifier = Modifier
-            .offset { IntOffset(left, top) }
+            .offset { IntOffset(info.leftPx, info.topPx) }
             .graphicsLayer {
                 scaleX = scale.value
                 scaleY = scale.value
@@ -466,8 +591,8 @@ private fun PopupAlternativas(info: PopupInfo, metrics: KeyboardMetrics) {
                 val seleccionada = i == info.seleccion
                 Box(
                     modifier = Modifier
-                        .width(metrics.popupCellDp.dp)
-                        .height(metrics.popupHeightDp.dp)
+                        .width(with(LocalDensity.current) { info.cellPx.toDp() })
+                        .height(with(LocalDensity.current) { info.heightPx.toDp() })
                         .background(if (seleccionada) LolaAccent else Color.Transparent),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -503,9 +628,10 @@ private fun Tecla(
     descripcion: String? = null,
     descripcionEstado: String? = null,
     metrics: KeyboardMetrics,
-    onPopupMostrar: (PopupInfo) -> Unit = {},
-    onPopupSeleccion: (Int) -> Unit = {},
-    onPopupCerrar: (Int) -> Unit = {},
+    viewportW: Float = 0f,
+    viewportH: Float = 0f,
+    popupController: PopupController? = null,
+    onComprometerAlternativa: (String) -> Unit = {},
 ) {
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
@@ -521,9 +647,9 @@ private fun Tecla(
     val swipeLeftActual by rememberUpdatedState(onSwipeLeft)
     val glideActual by rememberUpdatedState(onGlide)
     val tapActual by rememberUpdatedState(onTap)
-    val mostrarActual by rememberUpdatedState(onPopupMostrar)
-    val seleccionActual by rememberUpdatedState(onPopupSeleccion)
-    val cerrarActual by rememberUpdatedState(onPopupCerrar)
+    val comprometerActual by rememberUpdatedState(onComprometerAlternativa)
+    val viewportWActual by rememberUpdatedState(viewportW)
+    val viewportHActual by rememberUpdatedState(viewportH)
 
     val bg = when {
         pressed -> LolaAccent
@@ -564,12 +690,14 @@ private fun Tecla(
                         val dobleTapFn = dobleTapActual
                         val longPressFn = longPressActual
                         val tapFn = tapActual
-                        val mostrarFn = mostrarActual
-                        val seleccionFn = seleccionActual
-                        val cerrarFn = cerrarActual
                         val altList = altActuales
                         val swipeFn = swipeLeftActual
                         val glideFn = glideActual
+                        val vw = viewportWActual
+                        val vh = viewportHActual
+                        val popupCtl = popupController
+                        val comprometerFn = comprometerActual
+                        val tokenInicio = popupCtl?.cancelToken ?: 0
 
                         // Cursor glide (barra espaciadora): arrastrar horizontal
                         // mueve el cursor; soltar sin arrastrar = tap (espacio).
@@ -648,24 +776,59 @@ private fun Tecla(
                             // Long-press.
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             when {
-                                altList.isNotEmpty() -> {
+                                altList.isNotEmpty() && popupCtl != null -> {
                                     val celdaPx = with(density) { metrics.popupCellDp.dp.toPx() }
-                                    val centerX = posPx.x + sizePx.width / 2
-                                    val topY = posPx.y
-                                    val left = centerX - (altList.size * celdaPx) / 2
-                                    var seleccion = -1
-                                    mostrarFn(PopupInfo(altList, centerX.toInt(), topY.toInt()))
+                                    val altoPx = with(density) { metrics.popupHeightDp.dp.toPx() }
+                                    val popupW = celdaPx * altList.size
+                                    val (popupLeft, popupTop) = PopupPositioner.position(
+                                        keyLeft = posPx.x,
+                                        keyTop = posPx.y,
+                                        keyWidth = sizePx.width.toFloat(),
+                                        keyHeight = sizePx.height.toFloat(),
+                                        popupWidth = popupW,
+                                        popupHeight = altoPx,
+                                        viewportWidth = vw,
+                                        viewportHeight = vh,
+                                    )
+                                    val gesture = PopupGesture().also { it.start() }
+                                    popupCtl.mostrar(
+                                        PopupInfo(
+                                            altList,
+                                            popupLeft.toInt(),
+                                            popupTop.toInt(),
+                                            celdaPx.toInt(),
+                                            altoPx.toInt(),
+                                        ),
+                                    )
+                                    var cancelado = false
                                     while (true) {
                                         val e = awaitPointerEvent()
                                         val change = e.changes.firstOrNull { it.id == down.id } ?: break
+                                        // Back físico (spec §8B) cierra el popup e
+                                        // incrementa el token: se detecta ANTES del up
+                                        // para no commitear una alternativa fantasma.
+                                        if (popupCtl.cancelToken != tokenInicio) { cancelado = true; break }
                                         if (change.changedToUp()) break
+                                        if (!change.pressed) { cancelado = true; break }
                                         val dedoX = posPx.x + change.position.x
-                                        val idx = floor((dedoX - left) / celdaPx).toInt()
-                                        seleccion = idx.coerceIn(0, altList.size - 1)
-                                        seleccionFn(seleccion)
+                                        val idx = PopupGeometry.cellIndexAt(
+                                            dedoX, popupLeft, popupW, celdaPx, altList.size,
+                                        )
+                                        gesture.moveTo(idx)
+                                        popupCtl.seleccionar(gesture.selected)
                                     }
-                                    cerrarFn(seleccion)
-                                    if (seleccion == -1) tapFn()
+                                    if (!cancelado) {
+                                        val sel = gesture.commit()
+                                        if (sel >= 0) {
+                                            popupCtl.info?.alternativas?.getOrNull(sel)?.let(comprometerFn)
+                                        } else {
+                                            tapFn()
+                                        }
+                                        popupCtl.cerrar()
+                                    } else {
+                                        gesture.cancel()
+                                        popupCtl.cerrar()
+                                    }
                                 }
                                 longPressFn != null -> {
                                     longPressFn()
@@ -687,7 +850,7 @@ private fun Tecla(
     }
 }
 
-// ── Resultados / Carrito (modo LOLA expandido) ──────────────────────────────
+// ── Resultados / Carrito (modo LOLA) ────────────────────────────────────────
 
 @Composable
 private fun Resultados(controller: KeyboardController, modifier: Modifier = Modifier) {

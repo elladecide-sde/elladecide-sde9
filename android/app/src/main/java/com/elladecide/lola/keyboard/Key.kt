@@ -19,5 +19,9 @@ data class Key(val type: KeyType, val char: String? = null) {
         val LEFT = Key(KeyType.LEFT)
         val RIGHT = Key(KeyType.RIGHT)
         val UNDO = Key(KeyType.UNDO)
+        val COMMA = Key(KeyType.COMMA)
+        val DOT = Key(KeyType.DOT)
+        val TOOLS = Key(KeyType.TOOLS)
+        val BACK = Key(KeyType.BACK)
     }
 }

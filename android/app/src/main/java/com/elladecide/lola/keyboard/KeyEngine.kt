@@ -17,7 +17,7 @@ sealed interface KeyEffect {
     data object MoveLeft : KeyEffect
     data object MoveRight : KeyEffect
     data object Undo : KeyEffect
-    data object ToggleExpand : KeyEffect
+    data object ToggleLola : KeyEffect
 }
 
 /**
@@ -27,7 +27,7 @@ sealed interface KeyEffect {
  * [layer] y [shift] son snapshot state (`mutableStateOf`) para que Compose
  * recomponga al cambiar de capa/estado; la lógica (labels, pesos, transiciones)
  * sigue siendo pura y determinista. La UI renderiza a partir de
- * [layout]/[bottomRow] y consume [press].
+ * [layout]/[bottomRow]/[numberRow] y consume [press].
  */
 class KeyEngine {
 
@@ -39,12 +39,21 @@ class KeyEngine {
 
     val shiftActive: Boolean get() = shift.isActive
 
-    /** Layout de la capa actual (letras o símbolos; emoji se maneja aparte). */
+    /** Body de la capa actual (letras, símbolos o auxiliar). */
     fun layout(): List<List<Key>> = when (layer) {
+        KeyboardLayer.LETTERS -> Layouts.LETTERS
         KeyboardLayer.SYMBOLS -> Layouts.SYMBOLS
-        KeyboardLayer.LETTERS, KeyboardLayer.EMOJI -> Layouts.LETTERS
+        KeyboardLayer.AUX -> Layouts.AUX
+        KeyboardLayer.EMOJI -> Layouts.LETTERS
     }
 
+    /** Fila numérica permanente (solo en la capa de letras). */
+    fun numberRow(): List<Key> = when (layer) {
+        KeyboardLayer.LETTERS -> Layouts.NUMBER_ROW
+        else -> emptyList()
+    }
+
+    /** Fila inferior del teclado principal (coma · espacio · punto · enter). */
     fun bottomRow(): List<Key> = Layouts.BOTTOM_ROW
 
     /** Alternativas de long-press para una tecla, respetando shift. */
@@ -70,6 +79,10 @@ class KeyEngine {
         KeyType.LEFT -> "◀"
         KeyType.RIGHT -> "▶"
         KeyType.UNDO -> "↶"
+        KeyType.COMMA -> ","
+        KeyType.DOT -> "."
+        KeyType.TOOLS -> "≡"
+        KeyType.BACK -> "ABC"
     }
 
     /** Peso relativo de la tecla en su fila. */
@@ -78,14 +91,17 @@ class KeyEngine {
         KeyType.SHIFT, KeyType.BACKSPACE -> 1.5f
         KeyType.SPACE -> 4f
         KeyType.ENTER -> 2f
-        KeyType.LAYER, KeyType.EMOJI, KeyType.LOLA -> 1.5f
+        KeyType.LAYER, KeyType.EMOJI, KeyType.LOLA, KeyType.TOOLS -> 1.5f
         KeyType.LEFT, KeyType.RIGHT, KeyType.UNDO -> 1f
+        KeyType.COMMA, KeyType.DOT -> 1.5f
+        KeyType.BACK -> 2f
     }
 
     /** Resalta la tecla (shift activo, capa emoji). */
     fun isActive(key: Key): Boolean = when (key.type) {
         KeyType.SHIFT -> shiftActive
         KeyType.EMOJI -> layer == KeyboardLayer.EMOJI
+        KeyType.TOOLS -> layer == KeyboardLayer.AUX
         else -> false
     }
 
@@ -106,6 +122,10 @@ class KeyEngine {
         KeyType.LEFT -> "Mover cursor a la izquierda"
         KeyType.RIGHT -> "Mover cursor a la derecha"
         KeyType.UNDO -> "Deshacer"
+        KeyType.COMMA -> "Coma"
+        KeyType.DOT -> "Punto"
+        KeyType.TOOLS -> "Herramientas"
+        KeyType.BACK -> "Volver al teclado de letras"
     }
 
     /** Estado a anunciar (o null) cuando la tecla está activa/pulsada. */
@@ -114,6 +134,7 @@ class KeyEngine {
         key.type == KeyType.SHIFT && shift == ShiftState.MAYUSCULA -> "Mayúscula para una letra"
         key.type == KeyType.EMOJI && layer == KeyboardLayer.EMOJI -> "Teclado de emojis activo"
         key.type == KeyType.LAYER && layer == KeyboardLayer.SYMBOLS -> "Teclado de símbolos activo"
+        key.type == KeyType.TOOLS && layer == KeyboardLayer.AUX -> "Herramientas activas"
         else -> null
     }
 
@@ -168,10 +189,20 @@ class KeyEngine {
             layer = if (layer == KeyboardLayer.EMOJI) KeyboardLayer.LETTERS else KeyboardLayer.EMOJI
             null
         }
-        KeyType.LOLA -> KeyEffect.ToggleExpand
+        KeyType.LOLA -> KeyEffect.ToggleLola
         KeyType.LEFT -> KeyEffect.MoveLeft
         KeyType.RIGHT -> KeyEffect.MoveRight
         KeyType.UNDO -> KeyEffect.Undo
+        KeyType.COMMA -> KeyEffect.Commit(",")
+        KeyType.DOT -> KeyEffect.Commit(".")
+        KeyType.TOOLS -> {
+            layer = if (layer == KeyboardLayer.AUX) KeyboardLayer.LETTERS else KeyboardLayer.AUX
+            null
+        }
+        KeyType.BACK -> {
+            layer = KeyboardLayer.LETTERS
+            null
+        }
     }
 
     private fun enterLabel(profile: EditorProfile): String {

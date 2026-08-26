@@ -7,9 +7,17 @@ import org.junit.Test
 class KeyboardMetricsTest {
 
     @Test
-    fun `tecla de 52dp en pantalla tipica de 250dp`() {
-        val m = KeyboardMetrics.compute(250f, 1f)
-        assertEquals(52f, m.keyHeightDp, 0.01f)
+    fun `tecla de 46dp en 250dp sin fila numerica`() {
+        val m = KeyboardMetrics.compute(250f, 1f, showNumberRow = false)
+        assertEquals(46.5f, m.keyHeightDp, 0.01f)
+    }
+
+    @Test
+    fun `fila numerica reserva altura y encoge la tecla`() {
+        val conNum = KeyboardMetrics.compute(250f, 1f, showNumberRow = true)
+        val sinNum = KeyboardMetrics.compute(250f, 1f, showNumberRow = false)
+        assertTrue(conNum.keyHeightDp < sinNum.keyHeightDp)
+        assertTrue(conNum.keyHeightDp < KeyboardMetrics.MIN_KEY_HEIGHT_DP)
     }
 
     @Test
@@ -19,16 +27,40 @@ class KeyboardMetricsTest {
     }
 
     @Test
-    fun `se encoge en pantalla baja`() {
+    fun `se encoge en pantalla baja sin desbordar`() {
         val m = KeyboardMetrics.compute(150f, 1f)
-        assertTrue(m.keyHeightDp < 52f)
-        assertTrue(m.keyHeightDp >= KeyboardMetrics.MIN_KEY_HEIGHT_DP)
+        assertTrue(m.keyHeightDp < KeyboardMetrics.MIN_KEY_HEIGHT_DP)
+        assertTrue(m.keyHeightDp > 0f)
     }
 
     @Test
-    fun `respeta el minimo en pantalla muy baja`() {
+    fun `en ventana muy baja encoge antes que desbordar`() {
         val m = KeyboardMetrics.compute(80f, 1f)
+        assertTrue(m.keyHeightDp < KeyboardMetrics.MIN_KEY_HEIGHT_DP)
+        assertTrue(m.keyHeightDp > 0f)
+    }
+
+    @Test
+    fun `el shell nunca desborda el presupuesto disponible`() {
+        val overhead = KeyboardMetrics.STRIP_HEIGHT_DP +
+            (KeyboardMetrics.SCREEN_PADDING_DP * 2 + KeyboardMetrics.SPACING_DP * (KeyboardMetrics.TOTAL_ROWS - 1)) +
+            (KeyboardMetrics.NUMBER_ROW_HEIGHT_DP + KeyboardMetrics.SPACING_DP)
+        val h = 180f
+        val m = KeyboardMetrics.compute(h, 1f, showNumberRow = true)
+        assertTrue(overhead + KeyboardMetrics.TOTAL_ROWS * m.keyHeightDp <= h)
+    }
+
+    @Test
+    fun `el presupuesto del shell da teclas de minimo con fila numerica`() {
+        val m = KeyboardMetrics.compute(KeyboardMetrics.MIN_KEY_BODY_DP, 1f, showNumberRow = true)
         assertEquals(KeyboardMetrics.MIN_KEY_HEIGHT_DP, m.keyHeightDp, 0.01f)
+    }
+
+    @Test
+    fun `en 272dp con fila numerica las teclas son comodas y caben`() {
+        val m = KeyboardMetrics.compute(272f, 1f, showNumberRow = true)
+        assertTrue(m.keyHeightDp >= KeyboardMetrics.MIN_KEY_HEIGHT_DP)
+        assertTrue(m.keyHeightDp < KeyboardMetrics.MAX_KEY_HEIGHT_DP)
     }
 
     @Test

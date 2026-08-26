@@ -31,15 +31,58 @@ class KeyEngineTest {
     }
 
     @Test
-    fun `fila inferior contiene cursor enter espacio lola layer y emoji`() {
-        val types = Layouts.BOTTOM_ROW.map { it.type }
-        assertTrue(KeyType.LEFT in types)
-        assertTrue(KeyType.RIGHT in types)
-        assertTrue(KeyType.ENTER in types)
-        assertTrue(KeyType.SPACE in types)
-        assertTrue(KeyType.LOLA in types)
-        assertTrue(KeyType.LAYER in types)
-        assertTrue(KeyType.EMOJI in types)
+    fun `fila inferior contiene coma espacio punto y enter`() {
+        assertEquals(
+            listOf(KeyType.COMMA, KeyType.SPACE, KeyType.DOT, KeyType.ENTER),
+            Layouts.BOTTOM_ROW.map { it.type },
+        )
+    }
+
+    @Test
+    fun `fila numerica tiene los diez digitos`() {
+        assertEquals("1234567890".map { it.toString() }, Layouts.NUMBER_ROW.map { it.char })
+    }
+
+    @Test
+    fun `aux conserva los controles auxiliares`() {
+        val types = Layouts.AUX.flatten().map { it.type }
+        listOf(KeyType.UNDO, KeyType.LEFT, KeyType.RIGHT, KeyType.BACK, KeyType.EMOJI, KeyType.LOLA)
+            .forEach { assertTrue("falta $it en AUX", it in types) }
+    }
+
+    @Test
+    fun `tools alterna la capa auxiliar y la resalta`() {
+        val e = KeyEngine()
+        assertEquals(KeyboardLayer.LETTERS, e.layer)
+        e.press(Key.TOOLS)
+        assertEquals(KeyboardLayer.AUX, e.layer)
+        assertTrue(e.isActive(Key.TOOLS))
+        e.press(Key.TOOLS)
+        assertEquals(KeyboardLayer.LETTERS, e.layer)
+    }
+
+    @Test
+    fun `back vuelve a letras desde aux`() {
+        val e = KeyEngine()
+        e.press(Key.TOOLS)
+        e.press(Key.BACK)
+        assertEquals(KeyboardLayer.LETTERS, e.layer)
+        assertEquals("ABC", e.label(Key.BACK, EditorProfile.EMPTY))
+    }
+
+    @Test
+    fun `coma y punto committean texto`() {
+        val e = KeyEngine()
+        assertEquals(KeyEffect.Commit(","), e.press(Key.COMMA))
+        assertEquals(KeyEffect.Commit("."), e.press(Key.DOT))
+        assertEquals("Coma", e.contentDescription(Key.COMMA, EditorProfile.EMPTY))
+        assertEquals("Punto", e.contentDescription(Key.DOT, EditorProfile.EMPTY))
+    }
+
+    @Test
+    fun `lola produce efecto toggle`() {
+        val e = KeyEngine()
+        assertEquals(KeyEffect.ToggleLola, e.press(Key.LOLA))
     }
 
     @Test

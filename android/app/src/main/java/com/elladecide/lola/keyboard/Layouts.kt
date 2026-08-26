@@ -4,8 +4,20 @@ package com.elladecide.lola.keyboard
  * Layouts data-driven del teclado base. Son puros (solo [Key]) para poder
  * testear su integridad en la JVM (todas las letras, sin duplicados, filas
  * balanceadas).
+ *
+ * Estructura (spec F3):
+ *   TOOLBAR (cinta superior: tools o sugerencias)
+ *   NUMBER_ROW (solo capa de letras)
+ *   body (LETTERS / SYMBOLS / AUX)
+ *   BOTTOM_ROW (coma · espacio · punto · enter)
+ *
+ * Los controles auxiliares (cursor, undo, etc.) viven en [AUX], accesible
+ * desde la cinta, para no ocupar la fila inferior del teclado principal.
  */
 object Layouts {
+
+    /** Fila numérica permanente encima de las letras (capa LETTERS). */
+    val NUMBER_ROW: List<Key> = "1234567890".map { Key.char(it.toString()) }
 
     /** QWERTY español completo (3 filas + ñ). */
     val LETTERS: List<List<Key>> = listOf(
@@ -22,9 +34,15 @@ object Layouts {
         "_.!?,:'\"/".map { Key.char(it.toString()) } + listOf(Key.BACKSPACE),
     )
 
-    /** Fila inferior compartida, con navegación de cursor y deshacer. */
+    /** Fila inferior del teclado principal: coma · espacio · punto · enter. */
     val BOTTOM_ROW: List<Key> = listOf(
-        Key.UNDO, Key.LAYER, Key.EMOJI, Key.LEFT, Key.SPACE, Key.RIGHT, Key.LOLA, Key.ENTER,
+        Key.COMMA, Key.SPACE, Key.DOT, Key.ENTER,
+    )
+
+    /** Teclado secundario con los controles auxiliares (cursor, undo, etc.). */
+    val AUX: List<List<Key>> = listOf(
+        listOf(Key.UNDO, Key.LEFT, Key.RIGHT),
+        listOf(Key.BACK, Key.EMOJI, Key.LOLA),
     )
 
     /**

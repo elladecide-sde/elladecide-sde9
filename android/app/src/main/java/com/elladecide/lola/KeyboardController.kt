@@ -23,6 +23,9 @@ import com.elladecide.lola.keyboard.KeyEffect
 import com.elladecide.lola.keyboard.KeyEngine
 import com.elladecide.lola.keyboard.KeyType
 import com.elladecide.lola.keyboard.KeyboardLayer
+import com.elladecide.lola.keyboard.KeyboardMode
+import com.elladecide.lola.keyboard.KeyboardSize
+import com.elladecide.lola.keyboard.PopupController
 import com.elladecide.lola.language.SuggestionProvider
 import com.elladecide.lola.search.SearchEngine
 import kotlinx.coroutines.CoroutineScope
@@ -70,13 +73,34 @@ class KeyboardController(
     var descuento by mutableStateOf(15)
     var expandedCodigo by mutableStateOf<String?>(null)
     var imagenes by mutableStateOf<List<ImageEntry>>(emptyList())
-    var expandida by mutableStateOf(false)
+
+    /** Modo de funcionamiento (CHAT = teclado normal, LOLA = catálogo). */
+    var mode by mutableStateOf(KeyboardMode.CHAT)
+        private set
+
+    /** Tamaño del área (solo aplica en modo LOLA). */
+    var size by mutableStateOf(KeyboardSize.COMPACT)
+        private set
+
+    /** Conveniencia para la UI: el catálogo LOLA ocupa el área expandida. */
+    val enModoLola: Boolean get() = mode == KeyboardMode.LOLA
+    val expandida: Boolean get() = enModoLola && size == KeyboardSize.EXPANDED
+
+    /** Altura de la ventana del IME en dp según modo/tamaño (adaptativa). */
+    fun alturaDp(): Int = when {
+        enModoLola && size == KeyboardSize.EXPANDED -> LOLA_HEIGHT_DP
+        enModoLola -> LOLA_COMPACT_HEIGHT_DP
+        else -> CHAT_HEIGHT_DP
+    }
 
     /** Motor del teclado base (capa + shift + resolución de teclas). */
     val keyEngine = KeyEngine()
 
     /** Motor del panel de emojis (categorías + recientes). */
     val emojiEngine = EmojiEngine()
+
+    /** Estado del popup de long-press (lo cierra el IME con Back, spec §8B). */
+    val popupController = PopupController()
 
     /** Perfil del editor activo (para la etiqueta/acción del Enter). */
     var profile by mutableStateOf(EditorProfile.EMPTY)
@@ -88,9 +112,9 @@ class KeyboardController(
     /** Privacidad: opt-out del usuario para desactivar las sugerencias. */
     var suggestionsEnabled by mutableStateOf(true)
 
-    /** True cuando la barra de sugerencias debe mostrarse. */
+    /** True cuando la barra de sugerencias debe mostrarse (solo modo CHAT). */
     val sugerenciasVisibles: Boolean
-        get() = !expandida && capa != KeyboardLayer.EMOJI &&
+        get() = !enModoLola && capa != KeyboardLayer.EMOJI && capa != KeyboardLayer.AUX &&
             suggestionsEnabled && profile.suggestionsAllowed && suggestions.isNotEmpty()
 
     /** Capa visible, delegada al motor. */
@@ -154,7 +178,7 @@ class KeyboardController(
         estado = "Pedido vacío"
     }
 
-    fun toggleModo() {
+    fun toggleModoResultado() {
         modo = if (modo == ModoResultado.TEXTO) ModoResultado.PNG else ModoResultado.TEXTO
     }
 
@@ -169,12 +193,12 @@ class KeyboardController(
     }
 
     /**
-     * Escribe texto ya resuelto por el motor. En modo LOLA (expandida) alimenta
-     * la búsqueda; en modo teclado normal (contraída) tipea en la app anfitriona
+     * Escribe texto ya resuelto por el motor. En modo LOLA alimenta la búsqueda
+     * del catálogo; en modo teclado normal (CHAT) tipea en la app anfitriona
      * con composición de palabra (para poder sugerir y reemplazar).
      */
     fun tecla(texto: String) {
-        if (expandida) {
+        if (enModoLola) {
             onQueryChanged(query + texto)
         } else {
             onTypeText(texto)
@@ -193,7 +217,7 @@ class KeyboardController(
 
     /** Borra un carácter: de la búsqueda si estamos en modo LOLA, o de la app. */
     fun borrar() {
-        if (expandida) {
+        if (enModoLola) {
             onQueryChanged(query.dropLast(1))
         } else {
             onDelete()
@@ -215,7 +239,7 @@ class KeyboardController(
 
     /** Recalcula candidatos a partir de la palabra en composición actual. */
     private fun refreshSuggestions() {
-        suggestions = if (!expandida && suggestionsEnabled && profile.suggestionsAllowed) {
+        suggestions = if (!enModoLola && suggestionsEnabled && profile.suggestionsAllowed) {
             suggestionProvider.suggest(onCurrentWord(), "", 3)
         } else {
             emptyList()
@@ -265,24 +289,27 @@ class KeyboardController(
     /** Layout de la capa actual, ya resuelto por el motor. */
     fun teclasActuales(): List<List<Key>> = keyEngine.layout()
 
-    /** Fila inferior compartida (layer/emoji/cursor/espacio/lola/enter). */
+    /** Fila numérica permanente (vacía fuera de la capa de letras). */
+    fun filaNumerica(): List<Key> = keyEngine.numberRow()
+
+    /** Fila inferior compartida (coma · espacio · punto · enter). */
     fun filaInferior(): List<Key> = keyEngine.bottomRow()
 
     fun etiqueta(k: Key): String = keyEngine.label(k, profile)
 
     fun peso(k: Key): Float = keyEngine.weight(k)
 
-    /** Resalta la tecla (shift activo, capa emoji o modo LOLA expandido). */
-    fun esActiva(k: Key): Boolean = keyEngine.isActive(k) || (k.type == KeyType.LOLA && expandida)
+    /** Resalta la tecla (shift activo, capa emoji, modo LOLA). */
+    fun esActiva(k: Key): Boolean = keyEngine.isActive(k) || (k.type == KeyType.LOLA && enModoLola)
 
     fun alternativas(k: Key): List<String> = keyEngine.alternatives(k)
 
     /** Descripción legible de la tecla para accesibilidad (TalkBack). */
     fun descripcion(k: Key): String = keyEngine.contentDescription(k, profile)
 
-    /** Estado a anunciar, incluyendo el modo LOLA expandido (que no conoce el motor). */
+    /** Estado a anunciar, incluyendo el modo LOLA (que no conoce el motor). */
     fun descripcionEstado(k: Key): String? = keyEngine.stateDescription(k)
-        ?: if (k.type == KeyType.LOLA && expandida) "Modo LOLA activado" else null
+        ?: if (k.type == KeyType.LOLA && enModoLola) "Modo LOLA activado" else null
 
     /** Procesa una tecla vía el motor y enruta el efecto resultante. */
     fun press(k: Key) {
@@ -299,14 +326,30 @@ class KeyboardController(
                 refreshSuggestions()
             }
             KeyEffect.Undo -> deshacer()
-            KeyEffect.ToggleExpand -> toggleExpandir()
+            KeyEffect.ToggleLola -> toggleModo()
             null -> Unit
         }
     }
 
-    /** Alterna entre teclado expandido (modo LOLA) y contraído (teclado normal). */
+    /**
+     * Cambia de modo CHAT ↔ LOLA. Al entrar en LOLA se desactivan las
+     * predicciones (la cinta queda estable); al volver a CHAT se restauran
+     * automáticamente. No reconstruye el teclado: solo cambia estado observable.
+     */
+    fun toggleModo() {
+        mode = if (mode == KeyboardMode.CHAT) KeyboardMode.LOLA else KeyboardMode.CHAT
+        if (!enModoLola) size = KeyboardSize.COMPACT
+        refreshSuggestions()
+        onCambiarAltura?.invoke()
+    }
+
+    /**
+     * Alterna el tamaño del área en modo LOLA (COMPACT ↔ EXPANDED), recalculado
+     * desde [alturaDp] (adaptativo al viewport real, sin offsets fijos).
+     */
     fun toggleExpandir() {
-        expandida = !expandida
+        if (!enModoLola) return
+        size = if (size == KeyboardSize.COMPACT) KeyboardSize.EXPANDED else KeyboardSize.COMPACT
         onCambiarAltura?.invoke()
     }
 
@@ -349,5 +392,10 @@ class KeyboardController(
     companion object {
         private const val EMOJI_RECENTS_KEY = "emoji_recents"
         private const val RECENTS_DELIMITER = ","
+
+        /** Alturas de la ventana del IME en dp (adaptativas al viewport real). */
+        const val CHAT_HEIGHT_DP = 272
+        const val LOLA_COMPACT_HEIGHT_DP = 380
+        const val LOLA_HEIGHT_DP = 500
     }
 }

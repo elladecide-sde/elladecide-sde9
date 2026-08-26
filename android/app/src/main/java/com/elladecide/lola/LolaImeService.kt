@@ -7,6 +7,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.inputmethodservice.InputMethodService
 import android.net.Uri
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
@@ -93,6 +94,19 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
         session.onFinishInput()
     }
 
+    /**
+     * El Back físico/software (spec F3 §8B): el IME recibe el KEYCODE_BACK en
+     * [onKeyDown] ANTES que la Activity. Si hay un popup de long-press abierto,
+     * lo cierra SIN commitear y consume el evento (el teclado queda visible).
+     * Si no hay popup, delega en el comportamiento por defecto (ocultar el IME).
+     */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_DOWN) {
+            if (controller.popupController.cancelarExterno()) return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
     override fun onCreateInputView(): View {
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED
         controller.rescanear(this)
@@ -105,7 +119,7 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
             setViewTreeSavedStateRegistryOwner(this@LolaImeService)
             setContent { KeyboardScreen(controller) }
         }
-        rootView = ImeRootView(this, this, alturaPx(controller.expandida)).apply {
+        rootView = ImeRootView(this, this, alturaPx(controller)).apply {
             addView(
                 composeView,
                 ViewGroup.LayoutParams(
@@ -124,14 +138,13 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
      */
     private fun redimensionar() {
         if (::rootView.isInitialized) {
-            rootView.setAlturaPx(alturaPx(controller.expandida))
+            rootView.setAlturaPx(alturaPx(controller))
         }
     }
 
-    /** Altura de la ventana del IME en px según el modo (contraído/expandido). */
-    private fun alturaPx(expandida: Boolean): Int {
-        val alturaDp = if (expandida) 440 else 250
-        return (alturaDp * resources.displayMetrics.density).toInt()
+    /** Altura de la ventana del IME en px según el modo (CHAT/LOLA/tamaño). */
+    private fun alturaPx(controller: KeyboardController): Int {
+        return (controller.alturaDp() * resources.displayMetrics.density).toInt()
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
