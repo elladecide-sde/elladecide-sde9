@@ -9,6 +9,7 @@
     "deploy": "wrangler deploy",
     "db:init": "wrangler d1 execute lola-db --remote --file ./schema.sql",
     "db:init:local": "wrangler d1 execute lola-db --local --file ./schema.sql",
+    "db:migrate": "wrangler d1 execute lola-db --remote --file ./scripts/migrate.sql",
     "import": "tsx scripts/import-catalogo.ts",
     "test": "tsx --test src/*.test.ts"
   },

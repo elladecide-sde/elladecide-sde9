@@ -103,6 +103,8 @@ npx wrangler d1 create lola-db
 # 2) Crear las tablas
 npm run db:init:local     # dev (SQLite local)
 npm run db:init           # producción
+#    ¿Ya inicializaste con el esquema viejo? Corré la migración UNA vez:
+npm run db:migrate        # npx wrangler d1 execute lola-db --file ./scripts/migrate.sql
 
 # 3) Secrets de admin (JWT)
 #    Local: creá backend/.dev.vars con
