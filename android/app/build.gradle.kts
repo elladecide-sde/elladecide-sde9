@@ -81,6 +81,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.junit)
+    // org.json real para los unit tests: en la JVM (sin emulador) el stub de
+    // android.jar lanza "not mocked" al usar JSONArray (Product/preciosList).
+    testImplementation(libs.org.json)
 
     // Instrumentación (recomposición/accesibilidad) — corre en androidTest.
     androidTestImplementation(platform(libs.androidx.compose.bom))
