@@ -3,6 +3,9 @@ node_modules/
 .wrangler/
 .dev.vars
 
+# Output del import (catalogo.json + mapa-catalogo.json)
+backend/scripts/salida/
+
 # Android (fase 2)
 android/.gradle/
 android/.kotlin/

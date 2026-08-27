@@ -20,19 +20,16 @@ CREATE TABLE IF NOT EXISTS metadata (
 
 -- ── products: catálogo ──────────────────────────────────────────────────────
 --   codigo_unico       : CLAVE ÚNICA Y ESTABLE del producto. Se GENERA de forma
---                        determinística al migrar el Excel → D1, derivado del
---                        nombre + el código de artículo (modelo):
---                          "BELEN CONJUNTO ARMADO 1420" → "BELCONARM1420"
---                        (abreviación de las palabras + el número de modelo).
---                        Es la identidad que usan el sync y (a futuro) el
---                        matcheo de imágenes por código.
---                        TODO (PENDIENTE): script de import Excel → D1 que
---                        GENERE codigo_unico con esta regla. Faltan confirmar
---                        los detalles exactos de abreviación:
---                          · ¿abreviar TODAS las palabras antes del modelo,
---                            o solo las primeras 2 (como el Python actual)?
---                          · productos SIN modelo (ej. los "LIQ."):
---                            ¿qué criterio se usa? (abreviación completa?)
+--                        determinística en el import Excel → D1 (scripts/
+--                        import-catalogo.ts + src/codigoUnico.ts), que es la
+--                        FUENTE DE VERDAD. Regla:
+--                          abrev(marca) + codigo_de_artículo
+--                          "BAKHOU 2000 LISO ALGODON HOMBRE" → "BAK2000"
+--                        Sin modelo (ej. los "LIQ."): entra la descripción.
+--                        Colisiones → se agregan palabras posteriores al modelo,
+--                        se crecen las abreviaciones y, de último, un sufijo
+--                        hash. NUNCA usa posición ni contador: no depende del
+--                        orden del Excel. Ver src/codigoUnico.ts.
 --                        ⚠️  El "codigo" auto-generado del catalog.js
 --                        (prefijo + contador, ej. "ALM01002") NO es identidad:
 --                        cambia si se regenera el Excel en otro orden. Es solo

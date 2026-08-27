@@ -20,22 +20,50 @@ backend/
 
 ## Identidad: `codigo_unico`
 
-La clave primaria del catálogo es **`codigo_unico`**, generado de forma
-determinística al migrar el Excel → D1, derivado del nombre + el código de
-artículo (modelo):
+La clave primaria del catálogo es **`codigo_unico`**, generada de forma
+determinística por el **import** (fuente de verdad), derivada de la marca + el
+código de artículo:
 
 ```
-"BELEN CONJUNTO ARMADO 1420"  →  "BELCONARM1420"
-   BEL   CON   ARM   1420        BELCONARM + 1420
+"BAKHOU 2000 LISO ALGODON HOMBRE"  →  "BAK2000"
+   BAK   (2000)                        BAK + 2000
 ```
 
 - Es **estable** (no depende de un contador ni del orden del Excel).
+- Productos sin modelo (los "LIQ.") usan la descripción para desambiguar.
+- Las colisiones se resuelven agregando palabras posteriores al modelo,
+  creciendo las abreviaciones y, de último, con un sufijo hash (ver
+  `src/codigoUnico.ts`). **No hay orden-dependencia.**
 - El `codigo` del `catalog.js` de la extensión (prefijo + contador) **NO es
   identidad**; es solo un separador interno.
 
-> El matcheo de imágenes es OTRO tema y se mantiene con el método simple
-> (fábrica + modelo + fallback de descripciones) para que el vendedor no tenga
-> que nombrar sus archivos con un código largo.
+> El matcheo de imágenes es el consumidor de `codigo_unico`: el editor de fotos
+> (sde11) renombra cada foto `CODIGO_UNICO_COLOR.jpg` contra el mapa que
+> exporta el import (`mapa-catalogo.json`). La búsqueda del USUARIO sigue siendo
+> fuzzy por nombre; el `codigo_unico` es la llave interna, nunca la de búsqueda.
+
+## Import Excel → D1 (fuente de verdad)
+
+```bash
+# Solo calcular (dry-run): genera catalogo.json + mapa-catalogo.json
+npm run import -- ../catálogo.xlsx --out ./salida
+
+# Subir al Worker (local o producción)
+npm run import -- ../catálogo.xlsx --api http://localhost:8787 --user admin --password devpass
+```
+
+El Excel de ADM viene con **2 campos**: nombre (todo mezclado: marca + modelo +
+descripción) y precio de Lista 4. El import hace la inversa
+(`costo = precio / (1.21 * 1.50)`), recalcula las 4 listas y marca como precio
+fijo los nombres que terminan en `.`, `oferta` o `liq`.
+
+Flags útiles: `--col-nombre`, `--col-precio`, `--skip`, `--marcas=archivo.json`
+(lista de carpetas de `IMAGENES-LOLA` para códigos más limpios), `--dry-run`,
+`--chunk` (sube en lotes de 100 por request).
+
+Salidas en `--out`:
+- `catalogo.json` — los productos listos para D1 (`{ codigo_unico, nombre, precios }`).
+- `mapa-catalogo.json` — el mapa `marca + modelo → codigo_unico` para sde11.
 
 ## Setup (una sola vez)
 
@@ -126,6 +154,6 @@ sin espacios → SHA-256 hex.
 
 ## Pendiente (siguiente fase)
 
-- Script de **import/migración** Excel → D1, que genere `codigo_unico` con la
-  regla `abreviación(nombre) + modelo` (ej. BELCONARM1420).
-- Conectar el cliente Android (Room) a este contrato.
+- Conectar el cliente Android (Room) a este contrato (apuntar `base_url` al Worker).
+- Portar el consumidor del `mapa-catalogo.json` al editor de fotos (sde11):
+  renombrar cada foto a `CODIGO_UNICO_COLOR.jpg`.

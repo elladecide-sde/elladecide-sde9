@@ -28,6 +28,6 @@ Port nativo de la extensión LOLA (WhatsApp Web) a un **teclado Android (IME)** 
 
 ## Pendientes conocidos
 
-- Generación de `codigo_unico` (abreviación del nombre + modelo) — regla exacta
-  sin confirmar, ver TODO en `backend/schema.sql`.
-- Seed inicial de D1 con el catálogo real (2573 productos).
+- Conectar el cliente Android (Room) al Worker real (apuntar `base_url`).
+- Seed inicial de D1 con el catálogo real (2573 productos) vía `npm run import`.
+- Portar el consumidor del `mapa-catalogo.json` al editor de fotos (sde11).
