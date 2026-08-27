@@ -12,10 +12,10 @@ import java.net.URL
 /**
  * Cliente de sync contra el backend Cloudflare (ver backend/src/index.ts).
  *
- * Flujo offline-first:
+ * Flujo offline-first por HASH:
  *   1. GET /version → { revision, hash }
- *   2. si coincide con lo local → al día, 0 requests más
- *   3. si no → GET /sync?last_revision=N → aplicar deltas (upserts + borrados)
+ *   2. si el hash coincide con lo local → al día, 0 requests más
+ *   3. si no → GET /sync → catálogo COMPLETO → reemplazo atómico de la tabla local
  *
  * `baseUrl` y `secret` se configuran desde la pantalla de ajustes
  * (ConfigActivity). Por defecto, en el emulador 10.0.2.2 apunta al localhost
@@ -32,33 +32,28 @@ class SyncRepository(
     private val baseUrl: String = DEFAULT_BASE_URL,
     private val secret: String? = null,
 ) {
-    data class Resultado(val sincronizado: Boolean, val productos: Int, val borrados: Int)
+    data class Resultado(val sincronizado: Boolean, val productos: Int)
 
     suspend fun sync(): Resultado = withContext(Dispatchers.IO) {
         val version = getJson("/api/v1/version")
-        val serverRevision = version.getInt("revision")
         val serverHash = version.getString("hash")
         val local = metaDao.get() ?: SyncMeta()
 
-        if (local.revision == serverRevision && local.hash == serverHash) {
-            return@withContext Resultado(false, 0, 0) // al día
+        if (local.hash == serverHash) {
+            return@withContext Resultado(false, 0) // al día
         }
 
-        val delta = getJson("/api/v1/sync?last_revision=${local.revision}")
-        val productos = parseProducts(delta.getJSONArray("products"))
-        val borrados = (0 until delta.getJSONArray("deleted").length())
-            .map { delta.getJSONArray("deleted").getString(it) }
-
-        if (productos.isNotEmpty()) productDao.upsertAll(productos)
-        if (borrados.isNotEmpty()) productDao.deleteAll(borrados)
+        val full = getJson("/api/v1/sync")
+        val productos = parseProducts(full.getJSONArray("products"))
+        productDao.replaceAll(productos)
         metaDao.upsert(
             SyncMeta(
-                revision = delta.getInt("revision"),
-                hash = delta.getString("hash"),
+                revision = full.getInt("revision"),
+                hash = full.getString("hash"),
             ),
         )
 
-        Resultado(true, productos.size, borrados.size)
+        Resultado(true, productos.size)
     }
 
     private fun getJson(path: String): JSONObject {

@@ -1,10 +1,16 @@
 // app.js — LOLA catálogo: login JWT + parseo de Excel en el navegador + subida.
-// La lógica de parseo y precios es un port 1:1 de la extensión (content.js
-// `generateFromSync`) y del generador Python.
+//
+// La PÁGINA es la generadora (SheetJS + LolaCodigo + precios), el worker es el
+// mensajero que reemplaza el catálogo (replace). La regla de codigo_unico vive
+// en codigoUnico.js, port EXACTO del backend (verificado con el catálogo real).
+//
+// Precios (espejo del generador Python / importCatalogo):
+//   costo = precioLista4 / (1.21 * 1.50) → 4 listas. Oferta (termina en ".",
+//   "oferta" o "liq") → las 4 iguales al precio del Excel.
 
 const API_BASE = 'https://lola-backend.elladecide.workers.dev';
 
-// CONFIG — idéntico a CONFIG_DEFAULTS de la extensión.
+// CONFIG — idéntico a CONFIG_DEFAULTS de la extensión / configuracion.txt.
 const CONFIG = {
   iva: 21,
   inversaLista: 50,
@@ -49,74 +55,68 @@ function calcularPrecios(precioLista4) {
   return CONFIG.listas.map((f) => Math.round(costo * IVA * f));
 }
 
-// ── codigo_unico: abreviación del nombre + código de artículo (modelo) ──────
-// TODO (regla pendiente de confirmar): "BELEN CONJUNTO ARMADO 1420" → "BELCONARM1420".
-function generarCodigoUnico(nombre) {
-  const tokens = String(nombre)
-    .toUpperCase()
-    .replace(/[^A-Z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean);
-
-  const idxModelo = tokens.findIndex((t) => /\d{2,}/.test(t));
-  let palabras;
-  let modelo;
-  if (idxModelo === -1) {
-    palabras = tokens.slice(0, 4);
-    modelo = '';
-  } else {
-    palabras = tokens.slice(0, idxModelo);
-    modelo = (tokens[idxModelo].match(/\d+/) || [''])[0];
-  }
-  const abreviacion = palabras.map((w) => w.slice(0, 3)).join('');
-  return abreviacion + modelo;
-}
-
-// ── Parseo del Excel (port de generateFromSync) ─────────────────────────────
-function parseExcel(rows, colNombre, colPrecio, colCodigo, skipRows) {
-  const productos = [];
-  const vistos = new Set();
-  const usados = new Set();
+// ── Parseo + generación (espejo de importCatalogo, con LolaCodigo) ──────────
+function procesarCatalogo(rows, colNombre, colPrecio, colCodigo, skipRows) {
+  const filasOk = [];
+  const rechazadas = [];
 
   for (let i = skipRows; i < rows.length; i++) {
     const row = rows[i];
     if (!Array.isArray(row)) continue;
 
     const nombre = String(row[colNombre] ?? '').trim();
-    if (!nombre || nombre.length <= 3) continue;
-    if (!isNaN(Number(nombre))) continue;
+    if (!nombre || nombre.toLowerCase() === 'none' || nombre.length <= 3) {
+      rechazadas.push({ fila: i + 1, motivo: 'nombre vacío o corto' });
+      continue;
+    }
+    if (!Number.isNaN(Number(nombre))) {
+      rechazadas.push({ fila: i + 1, motivo: 'número suelto' });
+      continue;
+    }
 
-    const precio = parseFloat(row[colPrecio]);
-    if (!precio || precio <= 0) continue;
+    const precio = Number(row[colPrecio]);
+    if (!Number.isFinite(precio) || precio <= 0) {
+      rechazadas.push({ fila: i + 1, motivo: 'precio inválido' });
+      continue;
+    }
 
-    let codigoUnico = '';
+    let codigoExcel = '';
     if (colCodigo >= 0) {
       const raw = String(row[colCodigo] ?? '').trim();
       if (raw && raw.toLowerCase() !== 'none') {
-        codigoUnico = isNaN(Number(raw)) ? raw : String(parseInt(raw, 10));
+        codigoExcel = Number.isNaN(Number(raw)) ? raw : String(Math.trunc(Number(raw)));
       }
     }
-    if (!codigoUnico) codigoUnico = generarCodigoUnico(nombre);
-
-    let unico = codigoUnico;
-    let n = 1;
-    while (usados.has(unico)) unico = `${codigoUnico}-${n++}`;
-    usados.add(unico);
-
-    const key = nombre.toUpperCase();
-    if (vistos.has(key)) continue;
-    vistos.add(key);
-
-    const precios = esOferta(nombre)
-      ? [Math.round(precio), Math.round(precio), Math.round(precio), Math.round(precio)]
-      : calcularPrecios(precio);
-
-    productos.push({ codigo_unico: unico, nombre, precios });
+    filasOk.push({ nombre, precio, codigoExcel });
   }
-  return productos;
+
+  // Dedup por nombre normalizado (mismo criterio que el backend).
+  const porNombre = new Map();
+  const descartados = [];
+  for (const f of filasOk) {
+    const k = LolaCodigo.nombreNormalizado(f.nombre);
+    if (!porNombre.has(k)) porNombre.set(k, f);
+    else descartados.push(f.nombre);
+  }
+  const unicas = [...porNombre.values()];
+
+  // codigo_unico determinístico (regla de la página = backend).
+  const { codigos } = LolaCodigo.asignarCodigos(unicas.map((f) => ({ nombre: f.nombre })));
+
+  const productos = unicas.map((f) => ({
+    codigo_unico: codigos.get(LolaCodigo.nombreNormalizado(f.nombre)),
+    nombre: f.nombre,
+    precios: esOferta(f.nombre)
+      ? Array(4).fill(Math.round(f.precio))
+      : calcularPrecios(f.precio),
+  }));
+
+  const colisiones = productos.length - new Set(productos.map((p) => p.codigo_unico)).size;
+
+  return { productos, descartados, rechazadas, colisiones };
 }
 
-// ── Subida al backend (POST /api/v1/admin/products con Bearer) ──────────────
+// ── Subida al backend (reemplazo completo, atómico en el worker) ────────────
 async function subirCatalogo(productos) {
   const token = getToken();
   if (!token) throw new Error('Sesión expirada. Volvé a ingresar.');
@@ -126,7 +126,7 @@ async function subirCatalogo(productos) {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ products: productos }),
+    body: JSON.stringify({ products: productos, replace: true }),
   });
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
@@ -134,7 +134,7 @@ async function subirCatalogo(productos) {
     if (res.status === 401) { clearToken(); renderAuth(); }
     throw new Error(msg);
   }
-  return res.json(); // { revision, hash }
+  return res.json(); // { revision, hash, backup }
 }
 
 // ── Cambio de contraseña ────────────────────────────────────────────────────
@@ -268,12 +268,16 @@ $('generar').addEventListener('click', async () => {
     const colCodigo = parseInt($('colCodigo').value, 10) || -1;
     const skipRows = parseInt($('skipRows').value, 10) || 0;
 
-    productosGenerados = parseExcel(rows, colNombre, colPrecio, colCodigo, skipRows);
-    if (!productosGenerados.length) { setStatus('No se encontraron productos válidos. Revisá las columnas.', false); return; }
+    const r = procesarCatalogo(rows, colNombre, colPrecio, colCodigo, skipRows);
+    if (!r.productos.length) { setStatus('No se encontraron productos válidos. Revisá las columnas.', false); return; }
 
-    renderPreview(productosGenerados);
+    productosGenerados = r.productos;
+    renderPreview(r);
     $('subir').disabled = false;
-    setStatus(`✅ ${productosGenerados.length} productos generados — listos para subir`, true);
+
+    let msg = `✅ ${r.productos.length} productos · ${r.productos.length - r.colisiones} códigos únicos · ${r.descartados.length} duplicados`;
+    if (r.rechazadas.length) msg += ` · ${r.rechazadas.length} filas rechazadas`;
+    setStatus(msg + ' — listos para subir', true);
   } catch (err) {
     setStatus('❌ ' + err.message, false);
   }
@@ -282,18 +286,18 @@ $('generar').addEventListener('click', async () => {
 $('subir').addEventListener('click', async () => {
   if (!productosGenerados || !productosGenerados.length) return;
   try {
-    setStatus('Subiendo…', true);
+    setStatus('Subiendo (reemplazo del catálogo)…', true);
     const r = await subirCatalogo(productosGenerados);
-    setStatus(`☁️ Catálogo subido — revisión ${r.revision} · hash ${(r.hash || '').slice(0, 8)}…`, true);
+    setStatus(`☁️ Catálogo reemplazado — revisión ${r.revision} · hash ${(r.hash || '').slice(0, 8)}… · backup ${r.backup}`, true);
   } catch (err) {
     setStatus('❌ ' + err.message, false);
   }
 });
 
-function renderPreview(productos) {
+function renderPreview(r) {
   const body = $('previewBody');
   body.innerHTML = '';
-  const muestra = productos.slice(0, 10);
+  const muestra = r.productos.slice(0, 10);
   const tabla = document.createElement('table');
   tabla.innerHTML = '<thead><tr><th>Código</th><th>Nombre</th><th>L1</th><th>L2</th><th>L3</th><th>L4</th></tr></thead>';
   const tbody = document.createElement('tbody');
@@ -305,10 +309,10 @@ function renderPreview(productos) {
   });
   tabla.appendChild(tbody);
   body.appendChild(tabla);
-  if (productos.length > 10) {
+  if (r.productos.length > 10) {
     const más = document.createElement('p');
     más.className = 'muted';
-    más.textContent = `… y ${productos.length - 10} más.`;
+    más.textContent = `… y ${r.productos.length - 10} más.`;
     body.appendChild(más);
   }
   $('preview').hidden = false;
