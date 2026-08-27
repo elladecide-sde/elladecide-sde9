@@ -194,7 +194,6 @@ async function main() {
       return {
         codigo_unico: codigos.get(nombreNormalizado(f.nombre)),
         nombre: f.nombre,
-        marca: partes.marca.join(' '),
         modelo: partes.codigo || null,
       };
     }),

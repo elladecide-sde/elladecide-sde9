@@ -20,6 +20,7 @@
 
 import { bearerToken, generateSalt, hashPassword, safeEqual, signJwt, verifyJwt, verifyPassword } from './auth';
 import { computeCatalogHash, type ProductRef } from './hash';
+import { partir } from './codigoUnico';
 
 export interface Env {
   DB: D1Database;
@@ -224,6 +225,25 @@ async function adminDeleteProduct(db: D1Database, codigoUnico: string) {
   return { revision: newRevision, hash };
 }
 
+// ── Mapa para el editor de fotos (sde11) ────────────────────────────────────
+// { codigo_unico, nombre, modelo } para TODOS los productos. El editor de fotos
+// lo baja y lo usa para renombrar cada imagen a CODIGO_UNICO_COLOR.jpg.
+// El `modelo` se deriva del nombre con la MISMA lógica que el import
+// (src/codigoUnico.ts), así no hay ambigüedad entre generador y consumidor.
+
+async function handleMapa(db: D1Database) {
+  const meta = await getMetadata(db);
+  const res = await db
+    .prepare('SELECT codigo_unico, nombre FROM products ORDER BY codigo_unico')
+    .all<{ codigo_unico: string; nombre: string }>();
+  const productos = (res.results ?? []).map((r) => ({
+    codigo_unico: r.codigo_unico,
+    nombre: r.nombre,
+    modelo: partir(r.nombre).codigo || null,
+  }));
+  return json({ revision: meta.revision, hash: meta.hash, productos });
+}
+
 // ── Sync ─────────────────────────────────────────────────────────────────────
 
 async function handleSync(db: D1Database, url: URL) {
@@ -304,6 +324,8 @@ export default {
         res = json(await getMetadata(env.DB));
       } else if (method === 'GET' && path === '/api/v1/sync') {
         res = await handleSync(env.DB, url);
+      } else if (method === 'GET' && path === '/api/v1/mapa-catalogo') {
+        res = await handleMapa(env.DB);
       } else if (method === 'POST' && path === '/api/v1/auth/login') {
         res = await handleLogin(request, env);
       } else if (method === 'POST' && path === '/api/v1/auth/change-password') {

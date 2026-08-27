@@ -63,7 +63,12 @@ Flags útiles: `--col-nombre`, `--col-precio`, `--skip`, `--marcas=archivo.json`
 
 Salidas en `--out`:
 - `catalogo.json` — los productos listos para D1 (`{ codigo_unico, nombre, precios }`).
-- `mapa-catalogo.json` — el mapa `marca + modelo → codigo_unico` para sde11.
+- `mapa-catalogo.json` — el mapa `{ codigo_unico, nombre, modelo }` para sde11
+  (mismo shape que `GET /api/v1/mapa-catalogo`).
+
+> **sde11 consume el mapa** (no lo recalcula). Lo baja del Worker cuando la
+> `revision` cambió, o usa el `mapa-catalogo.json` local del import. Así hay
+> UNA sola fuente de verdad para `codigo_unico` y no hay ambigüedad.
 
 ## Setup (una sola vez)
 
@@ -105,6 +110,7 @@ npm run deploy   # producción
 | --- | --- | --- |
 | GET | `/api/v1/version` | `{ revision: number, hash: string }` |
 | GET | `/api/v1/sync?last_revision=N` | `{ revision, hash, products: [], deleted: [] }` |
+| GET | `/api/v1/mapa-catalogo` | `{ revision, hash, productos: [{ codigo_unico, nombre, modelo }] }` |
 
 `products[]` = `{ codigo_unico, nombre, precios: [L1, L2, L3, L4] }` (solo los tocados desde `N`).
 `deleted[]` = lista de `codigo_unico` borrados desde `N`.
