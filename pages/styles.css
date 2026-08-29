@@ -116,6 +116,8 @@ code { background: var(--surface-2); padding: 1px 6px; border-radius: 5px; }
 .btn.primary:hover:not(:disabled) { box-shadow: 0 6px 20px rgba(0, 212, 168, 0.3); }
 .btn.secondary { background: var(--surface-3); color: var(--text); }
 .btn.secondary:hover:not(:disabled) { background: #3c515d; }
+.btn.danger { background: #3a2320; color: var(--red); }
+.btn.danger:hover:not(:disabled) { background: #472925; }
 .btn.ghost { background: transparent; color: var(--muted); padding: 8px 12px; font-weight: 600; }
 .btn.ghost:hover { color: var(--text); background: var(--surface-2); }
 .btn.full { width: 100%; }

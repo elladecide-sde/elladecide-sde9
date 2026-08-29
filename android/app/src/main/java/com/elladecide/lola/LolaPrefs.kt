@@ -24,11 +24,17 @@ object LolaPrefs {
     const val KEY_TEXTO_DESC = "pedido_texto_desc"
     const val KEY_VALOR_MODO = "pedido_valor_modo"
     const val KEY_DESCUENTO_MODO = "pedido_descuento_modo"
+    const val KEY_LISTA_DEFAULT = "pedido_lista_default"
+    const val KEY_MODO_RESULTADO = "pedido_modo_resultado"
 
     // Config de red (ConfigActivity).
     const val KEY_BASE_URL = "base_url"
     const val KEY_SECRET = "secret"
     const val KEY_IMAGENES_ENABLED = "imagenes_enabled"
+
+    // Mini portapapeles (local, opt-in).
+    const val KEY_CLIPBOARD_ENABLED = "clipboard_enabled"
+    const val KEY_CLIPBOARD_ITEMS = "clipboard_items"
 
     fun get(context: Context): SharedPreferences =
         context.getSharedPreferences(NAME, Context.MODE_PRIVATE)

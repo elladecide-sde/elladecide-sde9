@@ -1,0 +1,7 @@
+{
+  "vocab_top": 20000,
+  "pad_id": 0,
+  "oov_id": 20001,
+  "ctx_len": 5,
+  "note": "id = posicion en palabras_comunes.txt (1-based) para las primeras 20000. Cualquier palabra fuera del top-20000 -> oov_id. Padding de contexto -> pad_id."
+}

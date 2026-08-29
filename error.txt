@@ -1,0 +1,556 @@
+F3 — CORRECCIÓN QUIRÚRGICA DEL IME DESPUÉS DE PRUEBA REAL EN DISPOSITIVO
+
+IMPORTANTE:
+
+Ya se realizó una prueba manual del APK en un dispositivo Android real.
+
+Se detectaron problemas tanto de INTERFAZ como de EDICIÓN DE TEXTO.
+
+NO empezar por parches visuales.
+
+Primero separar los problemas por responsabilidad y corregirlos sin introducir nuevas fuentes de verdad.
+
+No rediseñar la arquitectura completa.
+
+==================================================
+1. BUG CRÍTICO — CURSOR / SELECTION
+==================================================
+
+Existe un bug donde, al escribir varias líneas, especialmente al llegar a una tercera/cuarta línea, el cursor vuelve a una posición anterior.
+
+Ejemplo observado:
+
+1. El usuario escribe suficiente texto para superar varias líneas.
+2. Mueve el cursor manualmente hacia el final del texto.
+3. El cursor visual queda correctamente al final.
+4. El usuario escribe una nueva letra.
+5. Después de escribir, el cursor vuelve a una posición correspondiente aproximadamente a la tercera línea.
+
+Esto da la impresión de que existe un límite o una selección interna antigua que vuelve a imponerse después de cada escritura.
+
+INVESTIGAR LA CAUSA REAL.
+
+Revisar especialmente:
+
+- Selection del InputConnection.
+- estado interno del cursor.
+- estado Compose asociado al texto.
+- getTextBeforeCursor().
+- getTextAfterCursor().
+- setSelection().
+- commitText().
+- setComposingText().
+- recomposición del editor.
+- sincronización entre cursor visual y cursor real del InputConnection.
+
+NO solucionar esto mediante un offset visual.
+
+Debe existir UNA fuente de verdad para la selección real del editor.
+
+Después de:
+
+cursor → posición N
++
+escribir carácter
+
+el nuevo carácter debe insertarse exactamente en N y el cursor debe quedar en N + 1.
+
+==================================================
+2. BUG CRÍTICO — ESCRIBIR EN MEDIO DEL TEXTO
+==================================================
+
+Existe otro bug:
+
+Si el usuario mueve el cursor hacia una posición intermedia para agregar texto dentro de una palabra/frase, visualmente el cursor se mueve correctamente.
+
+Sin embargo, al escribir:
+
+el nuevo texto termina apareciendo al FINAL del texto en lugar de insertarse en la posición seleccionada.
+
+Esto indica una posible divergencia entre:
+
+SELECTION VISUAL
+y
+SELECTION REAL DEL INPUT CONNECTION.
+
+Investigar antes de modificar.
+
+Verificar que la secuencia sea conceptualmente:
+
+setSelection(N, N)
+        ↓
+commitText("x", 1)
+        ↓
+texto = textoAnterior[0..N] + "x" + textoAnterior[N..]
+        ↓
+selection = N + 1
+
+No utilizar una variable interna de cursor que pueda quedar desactualizada respecto del InputConnection.
+
+==================================================
+3. BUG CRÍTICO — TEXTO "LOLA" NO SE PUEDE BORRAR
+==================================================
+
+Existe un caso donde se genera una consulta/texto en Modo Lola que contiene:
+
+"lola"
+
+Después, al intentar borrar ese texto incluso regresando a Modo Chat, el Backspace no consigue eliminarlo normalmente.
+
+La única forma encontrada de desbloquearlo es:
+
+seleccionar todo
+→ reemplazar el texto por una letra
+→ luego volver a editar.
+
+Esto debe investigarse como posible problema de:
+
+- composing text
+- InputConnection
+- setComposingText()
+- finishComposingText()
+- deleteSurroundingText()
+- deleteSurroundingTextInCodePoints()
+- selección actual
+- estado interno del editor
+
+Determinar si "lola" está quedando dentro de una composing region o estado especial.
+
+El cambio:
+
+LOLA → CHAT
+
+debe dejar el texto completamente editable.
+
+El usuario debe poder borrar carácter por carácter normalmente.
+
+No aceptar como solución obligar al usuario a seleccionar todo.
+
+==================================================
+4. LONG-PRESS Y CARACTERES ESPECIALES
+==================================================
+
+Los caracteres especiales están incompletos.
+
+Ejemplo:
+
+mantener presionada una tecla relacionada con "?".
+
+Actualmente no aparecen todas las alternativas esperadas.
+
+Revisar los layouts de símbolos y las alternativas de long-press.
+
+No asumir que todas las teclas tienen solamente una alternativa.
+
+Crear una definición completa de alternativas por tecla.
+
+Verificar especialmente:
+
+- ?
+- !
+- ,
+- .
+- acentos
+- ñ
+- símbolos frecuentes
+- variantes mayúsculas/minúsculas cuando corresponda
+
+El popup debe utilizar la misma infraestructura de long-press ya implementada.
+
+==================================================
+5. POPUP LONG-PRESS
+==================================================
+
+Mantener las reglas ya definidas:
+
+- aparece al mantener presionada una tecla
+- permanece abierto mientras el dedo siga presionando
+- permite deslizar hacia una alternativa
+- resalta la alternativa bajo el dedo
+- al levantar el dedo selecciona la alternativa
+- Back cancela
+- tocar fuera cancela cuando corresponda
+- nunca sale del viewport
+- nunca se corta por izquierda/derecha
+- intenta aparecer arriba
+- si no hay espacio arriba, aparece abajo
+- si tampoco hay espacio, hace clamp
+
+NO utilizar offsets específicos por tecla.
+
+==================================================
+6. INTERFAZ — CORRECCIÓN QUIRÚRGICA
+==================================================
+
+NO rediseñar la interfaz.
+
+NO reinterpretar la distribución.
+
+La referencia visual es la estructura de un teclado móvil tipo Gboard/Google.
+
+La implementación debe acercarse a esa jerarquía visual.
+
+==================================================
+7. TOOLBAR SUPERIOR
+==================================================
+
+Arriba del teclado debe existir únicamente la TOOLBAR.
+
+Ejemplos de funciones:
+
+- GIF
+- stickers
+- configuración
+- traducción
+- herramientas
+- micrófono
+- otras funciones propias de la toolbar
+
+NO colocar aquí:
+
+- 123
+- emoji
+
+La toolbar NO debe contener controles de escritura.
+
+==================================================
+8. FILAS QWERTY
+==================================================
+
+Debajo de la toolbar deben estar las filas QWERTY.
+
+Las teclas actualmente se perciben demasiado pequeñas y el teclado demasiado comprimido verticalmente.
+
+Aumentar razonablemente el área destinada al teclado principal.
+
+Mantener:
+
+- proporciones
+- espaciado
+- distribución
+- jerarquía visual
+
+similares a la referencia.
+
+No utilizar tamaños fijos dependientes de un único dispositivo.
+
+==================================================
+9. FILA INFERIOR
+==================================================
+
+MUY IMPORTANTE:
+
+123 y emoji NO deben estar arriba.
+
+Deben estar ABAJO.
+
+La estructura objetivo de la fila inferior es:
+
+123 | , | 😀 | ESPACIO | . | ↵
+
+El espacio debe ocupar la mayor parte de la zona central.
+
+El punto debe estar antes de Enter.
+
+123 debe estar abajo a la izquierda.
+
+Emoji debe estar inmediatamente después de la coma.
+
+NO volver a colocar 123 o emoji dentro de la toolbar.
+
+==================================================
+10. TOOLBAR VS FILA DE ESCRITURA
+==================================================
+
+No mezclar responsabilidades.
+
+TOOLBAR:
+
+herramientas.
+
+FILA INFERIOR:
+
+controles de escritura.
+
+123 y emoji pertenecen exclusivamente a la fila inferior.
+
+==================================================
+11. PREDICCIONES
+==================================================
+
+La zona de predicciones actualmente es demasiado pequeña.
+
+Las palabras aparecen cortadas porque exceden el contenedor.
+
+Corregir la geometría del suggestion strip.
+
+Las sugerencias deben:
+
+- permanecer dentro de su contenedor
+- poder visualizarse completas cuando sea posible
+- adaptarse al ancho disponible
+- no quedar cortadas verticalmente
+- no modificar inesperadamente la altura del teclado
+
+No utilizar clipping como solución.
+
+Revisar padding, altura, medición y constraints del contenedor.
+
+==================================================
+12. MODO LOLA
+==================================================
+
+LOLA es un modo de teclado diferente.
+
+No tratarlo simplemente como "Teclado_Cursor".
+
+Renombrar "Teclado_Cursor" por un nombre que represente correctamente que se trata de otro tipo/modo de teclado.
+
+Elegir un nombre semánticamente correcto y consistente con la arquitectura existente.
+
+==================================================
+13. MODO LOLA — TOOLBAR
+==================================================
+
+Cuando el usuario está en Modo Lola:
+
+NO mostrar predicciones.
+
+La toolbar de Lola debe ser fija y estable.
+
+Debe contener:
+
+- Modo Chat
+- Expandir
+
+y las herramientas que correspondan a Lola.
+
+NO esconder estos controles dentro de un menú de tres líneas si son acciones principales.
+
+El problema actual es que algunos botones fueron simplemente trasladados al menú de tres líneas, lo cual dificulta el acceso y además molesta visualmente.
+
+La toolbar debe utilizarse correctamente.
+
+==================================================
+14. MODO LOLA — EXPANDIR
+==================================================
+
+Actualmente "Expandir" no ocupa realmente la pantalla disponible y el teclado expandido queda aproximadamente en un 60%, obstruyendo parte de la vista.
+
+Corregirlo.
+
+Al activar Expandir:
+
+- utilizar el máximo espacio vertical razonable disponible para el IME
+- recalcular el layout
+- mantener la toolbar accesible
+- no depender de un porcentaje fijo como 60%
+- no utilizar offsets mágicos
+
+La expansión debe calcularse respecto al viewport real disponible.
+
+==================================================
+15. SCROLL EN LOLA
+==================================================
+
+El contenido expandido de Lola puede superar el área visible.
+
+Debe existir scrolling cuando el contenido realmente lo necesite.
+
+No agregar un scrollbar permanente si no es necesario.
+
+Utilizar scrolling solamente cuando el contenido exceda el viewport.
+
+El usuario debe poder desplazarse por el contenido de Lola sin perder el acceso a los controles esenciales.
+
+==================================================
+16. MODO CHAT ↔ LOLA
+==================================================
+
+CHAT:
+
+- predicciones activas
+- suggestion strip
+- toolbar dinámica
+- teclado normal
+
+LOLA:
+
+- sin predicciones
+- toolbar fija
+- Modo Chat
+- Expandir
+- contenido de Lola
+
+Al volver:
+
+LOLA → CHAT
+
+debe restaurarse correctamente:
+
+- teclado Chat
+- predicciones
+- suggestion strip
+- toolbar Chat
+- comportamiento normal de edición
+
+No perder:
+
+- InputConnection
+- texto actual
+- selección
+- cursor
+
+==================================================
+17. NO CREAR FUENTES DE VERDAD DUPLICADAS
+==================================================
+
+Revisar especialmente el estado actual:
+
+KeyboardController:
+    expandida: Boolean
+
+y el nuevo:
+
+KeyboardMode
+KeyboardSize
+
+Si KeyboardSize pasa a ser la fuente de verdad, eliminar o adaptar el estado duplicado.
+
+No permitir:
+
+Controller = EXPANDIDO
+Engine = COMPACTO
+UI = EXPANDIDO
+
+Debe existir una única fuente de verdad.
+
+Aplicar la misma regla al cursor.
+
+Debe existir una única selección real del editor.
+
+==================================================
+18. ARQUITECTURA
+==================================================
+
+Mantener:
+
+KeyEngine
+→ lógica del teclado.
+
+KeyboardController / IME
+→ interacción con Android/InputConnection.
+
+Compose UI
+→ representación visual.
+
+PopupPositioner
+→ geometría pura.
+
+KeyboardMode / KeyboardSize
+→ estado explícito de modo/tamaño.
+
+No introducir lógica de InputConnection dentro de componentes visuales.
+
+No introducir cálculos visuales dentro del engine si pueden pertenecer a la UI/geometría.
+
+==================================================
+19. TESTS
+==================================================
+
+Agregar o actualizar tests para:
+
+CURSOR:
+
+- escribir después de mover cursor al final
+- escribir después de mover cursor al medio
+- escribir después de mover cursor al inicio
+- cursor después de múltiples líneas
+- cursor después de recomposición
+- cursor después de cambiar Chat/Lola
+
+EDICIÓN:
+
+- insertar en medio
+- borrar en medio
+- borrar al final
+- borrar texto generado por Lola
+- borrar composing text
+- finishComposingText
+- cambiar Lola → Chat
+
+LONG PRESS:
+
+- ?
+- !
+- acentos
+- ñ
+- símbolos
+- swipe
+- cancelación
+- Back
+- click fuera
+- límites del viewport
+
+LAYOUT:
+
+- toolbar
+- fila QWERTY
+- fila inferior
+- 123 abajo
+- emoji abajo
+- punto
+- coma
+- Enter
+- predicciones sin clipping
+
+LOLA:
+
+- entrar
+- salir
+- expandir
+- contraer
+- scrolling
+- toolbar fija
+- sin predicciones
+
+==================================================
+20. CRITERIO DE FINALIZACIÓN
+==================================================
+
+F3 NO está terminado hasta verificar:
+
+✓ El cursor real coincide con el cursor visual.
+✓ Escribir en el medio realmente inserta en el medio.
+✓ Escribir al final permanece al final.
+✓ El cursor no vuelve a una línea anterior después de escribir.
+✓ "lola" puede borrarse normalmente.
+✓ Chat ↔ Lola no rompe InputConnection.
+✓ Los caracteres especiales tienen alternativas completas.
+✓ Long-press permanece abierto mientras corresponde.
+✓ Swipe funciona.
+✓ Popup nunca se corta.
+✓ Toolbar está arriba.
+✓ 123 está abajo.
+✓ Emoji está abajo.
+✓ La fila inferior sigue la estructura especificada.
+✓ QWERTY ocupa más espacio vertical.
+✓ Las predicciones no se cortan.
+✓ Lola puede expandirse utilizando correctamente el viewport.
+✓ Lola permite scrolling cuando el contenido excede el área.
+✓ Las acciones principales de Lola no están escondidas innecesariamente en el menú de tres líneas.
+✓ "Teclado_Cursor" fue renombrado semánticamente.
+✓ No existen fuentes de verdad duplicadas.
+✓ No existen offsets mágicos dependientes del dispositivo.
+
+IMPORTANTE:
+
+Antes de tocar código, conservar el análisis de arquitectura ya realizado.
+
+No resolver bugs de InputConnection con parches visuales.
+
+No resolver problemas de cursor modificando únicamente la posición dibujada.
+
+No resolver problemas de layout con offsets mágicos.
+
+Corregir la causa real.

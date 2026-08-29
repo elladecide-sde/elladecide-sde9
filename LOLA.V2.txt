@@ -1,0 +1,625 @@
+F3 — REDISEÑO DEL IME, VIEWPORT, TOOLBAR, NUMBER ROW Y LONG-PRESS POPUPS
+
+OBJETIVO GENERAL
+
+Antes de agregar nuevas funcionalidades, corregir la experiencia visual y geométrica del teclado real instalado.
+
+La prioridad de F3 es que el teclado se comporte como un teclado móvil moderno y sea robusto ante distintos tamaños de pantalla, posiciones y alturas disponibles.
+
+NO hacer un clon literal de Gboard. Usar Gboard únicamente como referencia de UX, distribución y comportamiento esperado.
+
+==================================================
+1. REDISEÑO DEL TECLADO PRINCIPAL
+==================================================
+
+El teclado principal debe priorizar las teclas de escritura comunes.
+
+Actualmente existen controles como:
+
+- volver atrás
+- desplazamiento izquierda
+- desplazamiento derecha
+- otros botones auxiliares
+
+NO eliminarlos del proyecto.
+
+Conservar su funcionalidad y moverlos a un layout/teclado secundario accesible desde la nueva cinta de herramientas.
+
+El teclado principal debe priorizar:
+
+- letras
+- Shift
+- Backspace
+- coma (,)
+- punto (.)
+- espacio
+- Enter/acción
+- números mediante una fila superior dedicada
+
+La idea es que los botones auxiliares no ocupen permanentemente espacio vertical del teclado principal.
+
+==================================================
+2. CINTA DE HERRAMIENTAS
+==================================================
+
+Crear/reorganizar una toolbar superior.
+
+La toolbar debe ocupar aproximadamente el 10–15% del área vertical total destinada al IME junto con la fila numérica.
+
+La toolbar debe permitir acceder a:
+
+- funciones auxiliares
+- cambio de teclado/layout
+- teclado Lola
+- otras herramientas existentes que actualmente ocupan espacio dentro del teclado
+
+IMPORTANTE:
+
+Los botones existentes de:
+
+- volver
+- izquierda
+- derecha
+- etc.
+
+NO deben perderse.
+
+Deben pasar a un teclado/layout secundario o panel accesible desde esta cinta.
+
+Debe existir una forma clara de volver al teclado principal.
+
+==================================================
+3. FILA NUMÉRICA
+==================================================
+
+Agregar una fila permanente encima de las letras:
+
+1 2 3 4 5 6 7 8 9 0
+
+Esta fila forma parte del layout principal.
+
+La fila numérica debe tener una altura razonable y adaptativa.
+
+No utilizar dimensiones absolutas dependientes de un único dispositivo.
+
+La fila numérica + toolbar juntas deben consumir aproximadamente el 10–15% del espacio vertical disponible del IME, evitando que el teclado principal se vuelva excesivamente alto.
+
+==================================================
+4. DISTRIBUCIÓN VERTICAL
+==================================================
+
+El layout debe diseñarse tomando como restricción primaria el viewport REAL disponible para el IME.
+
+No asumir:
+
+- una resolución concreta
+- una altura concreta
+- un ancho concreto
+- offsets fijos
+- posiciones absolutas basadas en un teléfono específico
+
+La estructura conceptual debe ser:
+
+ROOT DEL IME
+│
+├── TOOLBAR / SUGGESTION STRIP
+│
+├── NUMBER ROW
+│
+└── KEYBOARD BODY
+    ├── QWERTY
+    ├── ASDF...
+    ├── ZXCV...
+    └── SPACE / COMMA / DOT / ENTER
+
+Todos los componentes deben adaptarse al espacio disponible.
+
+==================================================
+5. SUGERENCIAS
+==================================================
+
+Actualmente al escribir las predicciones reemplazan visualmente parte de la toolbar.
+
+Reestructurar esto.
+
+La zona superior debe tener una geometría estable.
+
+Cuando no existan predicciones:
+
+mostrar herramientas.
+
+Cuando existan predicciones:
+
+mostrar las sugerencias.
+
+No provocar que todo el teclado se desplace verticalmente de forma inesperada.
+
+Las predicciones nunca deben quedar recortadas.
+
+Las sugerencias deben respetar los límites del viewport.
+
+==================================================
+6. LONG-PRESS POPUP
+==================================================
+
+CORREGIR COMPLETAMENTE EL COMPORTAMIENTO DEL POPUP DE ALTERNATIVAS.
+
+Ejemplo:
+
+Mantener presionada:
+
+a
+
+debe mostrar:
+
+á à ä â ...
+
+El popup NO debe desaparecer mientras el dedo continúe presionando la tecla.
+
+El usuario debe poder mantener el dedo presionado y seleccionar tranquilamente una alternativa.
+
+==================================================
+7. POPUP + SLIDE / GESTURE SELECTION
+==================================================
+
+El popup debe ser compatible con selección mediante deslizamiento.
+
+Flujo esperado:
+
+1. Usuario mantiene presionada una tecla.
+2. Aparece el popup.
+3. Usuario mantiene el dedo sobre la pantalla.
+4. Desliza hacia la alternativa deseada.
+5. La alternativa correspondiente se resalta.
+6. Usuario levanta el dedo.
+7. Se inserta la alternativa seleccionada.
+8. Popup se cierra.
+
+No exigir que el usuario tenga que levantar el dedo para abrir o seleccionar.
+
+El gesto debe funcionar de forma fluida.
+
+==================================================
+8. CIERRE DEL POPUP
+==================================================
+
+El popup debe cerrarse cuando:
+
+A. El usuario selecciona una alternativa y levanta el dedo.
+
+B. El usuario pulsa el botón ATRÁS físico/software del teléfono.
+
+C. El usuario toca/clickea fuera del popup cuando corresponda.
+
+D. Se cancela el gesto/touch.
+
+El cierre debe limpiar correctamente cualquier estado temporal asociado al long-press.
+
+No dejar estados visuales "pegados".
+
+==================================================
+9. POSICIONAMIENTO DEL POPUP
+==================================================
+
+NO utilizar offsets mágicos.
+
+NO asumir que:
+
+popupY = keyY - constante
+
+El popup debe calcularse respecto al ROOT/viewport real del IME.
+
+Debe conocer:
+
+- posición de la tecla
+- ancho de la tecla
+- alto de la tecla
+- tamaño del popup
+- límites superior/inferior del viewport
+
+Regla:
+
+1. Intentar mostrar el popup ARRIBA de la tecla.
+2. Si no existe suficiente espacio arriba, mostrarlo ABAJO.
+3. Si tampoco existe suficiente espacio abajo, limitar/clamp la posición al viewport.
+4. El popup NUNCA debe quedar parcialmente fuera de la pantalla.
+5. El popup NUNCA debe quedar cortado por el borde izquierdo o derecho.
+
+Esto es especialmente importante para teclas ubicadas:
+
+- en el extremo izquierdo
+- en el extremo derecho
+- cerca de la parte superior
+- cerca de la parte inferior
+
+Ejemplo:
+
+Si se mantiene presionada la Q:
+
+el popup no puede extenderse fuera del borde izquierdo.
+
+Si se mantiene presionada la P:
+
+el popup no puede extenderse fuera del borde derecho.
+
+Si se mantiene presionada una tecla cerca del límite superior:
+
+el popup debe poder abrirse hacia abajo si no existe espacio suficiente arriba.
+
+==================================================
+10. COORDENADAS
+==================================================
+
+Revisar cómo se calculan actualmente las coordenadas de:
+
+- teclas
+- popup
+- toolbar
+- keyboard root
+
+Evitar mezclar coordenadas locales de un composable con coordenadas globales del window sin conversión.
+
+El posicionamiento debe realizarse utilizando un sistema de coordenadas consistente.
+
+Si actualmente existe lógica de posicionamiento dentro de KeyEngine, Controller o UI, determinar cuál es la responsabilidad correcta de cada capa antes de modificar.
+
+No duplicar cálculos de coordenadas.
+
+==================================================
+11. ESTADOS DEL LONG-PRESS
+==================================================
+
+Definir claramente el estado del popup.
+
+Como mínimo contemplar:
+
+IDLE
+LONG_PRESS_ACTIVE
+OPTION_SELECTED
+CANCELLED
+
+Evitar estados ambiguos.
+
+Al cerrar el popup deben limpiarse correctamente:
+
+- tecla activa
+- alternativa seleccionada
+- posición del popup
+- estado del gesto
+- cualquier shift temporal que corresponda
+
+==================================================
+12. SHIFT + LONG-PRESS
+==================================================
+
+Revisar específicamente la interacción:
+
+SHIFT temporal
++
+LONG PRESS
++
+selección de alternativa
+
+Determinar cuándo se consume el SHIFT.
+
+El comportamiento debe ser coherente y estar cubierto mediante tests.
+
+No dejar el SHIFT temporal accidentalmente activo después de seleccionar una alternativa.
+
+==================================================
+13. COMPOSING + CURSOR
+==================================================
+
+Revisar el comportamiento del cursor cuando existe composing text.
+
+No implementar un parche superficial.
+
+Determinar si F3 necesita que moveCursor soporte correctamente posiciones dentro del composing.
+
+Si esta funcionalidad es necesaria para la arquitectura futura del IME, implementarla ahora.
+
+Si no es necesaria todavía, dejar el comportamiento explícitamente documentado y cubrirlo con tests para evitar regresiones.
+
+==================================================
+14. RESPONSABILIDADES ARQUITECTÓNICAS
+==================================================
+
+Mantener separación entre:
+
+KeyEngine
+→ lógica y estado del teclado.
+
+UI/Compose
+→ representación visual.
+
+Layout
+→ geometría y dimensiones.
+
+Popup
+→ interacción y posicionamiento visual.
+
+IME/Controller
+→ eventos del sistema, input connection y lifecycle.
+
+No mover lógica arbitrariamente entre capas solamente para solucionar un problema visual.
+
+==================================================
+15. TESTS
+==================================================
+
+Agregar o actualizar tests para cubrir como mínimo:
+
+- long press
+- popup permanece abierto mientras el dedo está presionado
+- selección por swipe
+- selección al levantar el dedo
+- cancelación
+- botón atrás
+- click fuera
+- popup en tecla izquierda
+- popup en tecla derecha
+- popup cerca del límite superior
+- popup cerca del límite inferior
+- popup nunca sale del viewport
+- shift + long press
+- cambio de teclado/layout
+- fila numérica
+- coma
+- punto
+- preservación de los botones auxiliares en el teclado secundario
+
+Los tests de lógica deben seguir siendo JVM-testable.
+
+No introducir dependencias innecesarias de Robolectric únicamente para probar lógica del engine.
+
+==================================================
+16. COMPATIBILIDAD CON F2
+==================================================
+
+NO romper:
+
+- KeyEngine
+- ShiftState
+- KeyboardLayer
+- layouts existentes
+- autorepeat
+- moveCursor
+- EditorProfile
+- action labels
+- composición existente
+- long press existente
+- tests existentes
+
+Antes de modificar una API utilizada por F2, inspeccionar sus consumidores.
+
+==================================================
+17. REGLA CONTRA PARCHES
+==================================================
+
+NO solucionar los problemas mediante:
+
+- offsets arbitrarios
+- valores mágicos
+- ifs específicos para una resolución
+- condiciones específicas para Q/P/A/etc.
+- dimensiones fijas de pantalla
+- hacks específicos para un dispositivo
+
+La solución debe derivarse de:
+
+viewport disponible
++
+dimensiones reales
++
+posición real del componente
++
+tamaño real del popup.
+
+==================================================
+18. CRITERIO DE FINALIZACIÓN DE F3
+==================================================
+
+F3 NO se considera terminado simplemente porque compile.
+
+Debe quedar verificado mediante inspección y tests que:
+
+✓ El teclado principal tiene las teclas comunes necesarias.
+✓ Existe fila numérica 1–0.
+✓ Los botones auxiliares siguen existiendo pero fueron trasladados al layout/panel secundario.
+✓ Existe acceso claro al teclado Lola.
+✓ Existe acceso al cambio de teclado.
+✓ Toolbar y fila numérica tienen una altura razonable.
+✓ Las predicciones no quedan cortadas.
+✓ El popup de long press permanece abierto mientras el dedo está presionado.
+✓ El popup permite selección mediante swipe.
+✓ El popup se cierra al levantar el dedo después de seleccionar.
+✓ El popup se cierra mediante Back.
+✓ El popup se cancela al tocar fuera cuando corresponda.
+✓ El popup nunca se sale del viewport horizontalmente.
+✓ El popup nunca queda recortado verticalmente.
+✓ El posicionamiento funciona independientemente de la tecla presionada.
+✓ No existen offsets mágicos dependientes de un dispositivo.
+✓ F2 sigue funcionando.
+✓ Los tests existentes no se rompen.
+✓ Los nuevos edge cases están cubiertos.
+
+IMPORTANTE:
+
+Antes de implementar, inspeccionar el código actual de F2 y explicar brevemente qué componentes serán modificados y por qué.
+
+Después realizar los cambios.
+
+No avanzar a F4 ni introducir funcionalidades que no pertenezcan a este alcance.
+
+F3 debe dejar una base geométrica y de interacción sólida para las siguientes fases.
+
+
+
+
+==================================================
+19. MODO CHAT / MODO LOLA
+==================================================
+
+Existe una funcionalidad especial llamada LOLA.
+
+Actualmente, al entrar en LOLA desaparece la posibilidad de expandir el teclado.
+
+Corregir esto mediante una separación explícita entre dos modos de funcionamiento:
+
+KeyboardMode.CHAT
+KeyboardMode.LOLA
+
+==================================================
+MODO CHAT
+==================================================
+
+En CHAT debe mantenerse el comportamiento normal del teclado:
+
+- predicciones activas
+- suggestion strip
+- toolbar dinámica
+- comportamiento normal del IME
+- teclado principal
+
+Cuando el usuario vuelva desde LOLA a CHAT, deben restaurarse las predicciones y el comportamiento normal automáticamente.
+
+No mantener el estado de LOLA activo accidentalmente.
+
+==================================================
+MODO LOLA
+==================================================
+
+En LOLA:
+
+- no mostrar predicciones de palabras
+- no utilizar suggestion strip para predicciones
+- la cinta superior debe ser estable
+- los controles de la cinta deben permanecer visibles
+- debe existir un botón "Modo Chat"
+- debe existir un botón "Expandir"
+
+La ausencia de predicciones es intencional.
+
+No intentar llenar ese espacio con recomendaciones de palabras.
+
+==================================================
+EXPANDIR EN LOLA
+==================================================
+
+El botón "Expandir" debe cambiar el tamaño/altura disponible del teclado Lola.
+
+El objetivo es permitir que Lola utilice un área mayor de la pantalla cuando el usuario lo solicite.
+
+No implementar la expansión mediante un offset fijo.
+
+Debe recalcularse utilizando el viewport real disponible.
+
+La expansión debe ser reversible.
+
+Cuando corresponda, el botón puede cambiar su función/label a "Contraer" para permitir volver al tamaño anterior.
+
+==================================================
+MODO CHAT DESDE LOLA
+==================================================
+
+El botón "Modo Chat" debe:
+
+1. cambiar KeyboardMode de LOLA a CHAT
+2. restaurar el teclado normal
+3. restaurar las predicciones
+4. restaurar suggestion strip
+5. restaurar la toolbar dinámica
+6. conservar correctamente el estado del InputConnection
+7. no duplicar vistas ni crear múltiples instancias del teclado
+
+El cambio de modo debe ser un cambio de estado observable y no una reconstrucción arbitraria de toda la arquitectura.
+
+==================================================
+MODELO DE ESTADO
+==================================================
+
+Representar explícitamente:
+
+KeyboardMode
+    CHAT
+    LOLA
+
+y, si la arquitectura actual lo permite:
+
+KeyboardSize
+    COMPACT
+    EXPANDED
+
+Evitar booleanos ambiguos como:
+
+isLola
+isExpanded
+showPrediction
+hideToolbar
+...
+
+si estos terminan generando combinaciones de estados inválidas.
+
+El estado debe tener transiciones claras.
+
+Ejemplo:
+
+CHAT
+  ↓
+LOLA
+  ↓
+LOLA + EXPANDED
+  ↓
+LOLA
+  ↓
+CHAT
+
+==================================================
+REGLAS DE TRANSICIÓN
+==================================================
+
+CHAT → LOLA:
+
+- desactivar predicciones
+- mostrar toolbar de Lola
+- mostrar "Modo Chat"
+- mostrar "Expandir"
+- conservar InputConnection
+
+LOLA → LOLA EXPANDIDO:
+
+- aumentar área disponible
+- mantener toolbar fija
+- mantener sin predicciones
+
+LOLA EXPANDIDO → LOLA:
+
+- volver al tamaño anterior
+
+LOLA → CHAT:
+
+- reactivar predicciones
+- reactivar suggestion strip
+- restaurar toolbar de Chat
+- restaurar comportamiento normal
+
+==================================================
+CRITERIO DE FINALIZACIÓN
+==================================================
+
+Verificar manualmente:
+
+✓ Lola tiene acceso a "Modo Chat".
+✓ Lola tiene acceso a "Expandir".
+✓ Expandir realmente aumenta el área disponible.
+✓ Expandir no utiliza offsets mágicos.
+✓ Lola no muestra predicciones.
+✓ La cinta de Lola permanece estable.
+✓ Volver a Chat reactiva las predicciones.
+✓ Volver a Chat reactiva la toolbar correspondiente.
+✓ No se pierde el InputConnection.
+✓ No se duplican componentes Compose.
+✓ El cambio Chat ↔ Lola no rompe long press.
+✓ El cambio Chat ↔ Lola no rompe cursor.
+✓ El cambio Chat ↔ Lola no rompe el estado del teclado.
+✓ El comportamiento funciona en diferentes alturas de pantalla.

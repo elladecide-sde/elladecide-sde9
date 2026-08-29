@@ -9,6 +9,7 @@ import com.elladecide.lola.language.PrefixSuggestionProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -168,4 +169,58 @@ class KeyboardControllerTest {
 
     private val producto: Product =
         Product.fromPrecios("TEST", "TEST 100", listOf(1000, 2000, 3000, 4000))
+
+    // ── Lista fijada (fijarLista) y clamp de addToCart ───────────────────
+
+    @Test
+    fun `fijarLista coerce fuera de rango en menos uno hasta la ultima lista`() {
+        val c = controller()
+        c.fijarLista(99)
+        assertEquals(3, c.defaultListaIndex)
+        c.fijarLista(-5)
+        assertEquals(-1, c.defaultListaIndex)
+    }
+
+    @Test
+    fun `fijarLista limpia expandedCodigo`() {
+        val c = controller()
+        c.toggleExpanded(producto.codigoUnico)
+        assertEquals(producto.codigoUnico, c.expandedCodigo)
+        c.fijarLista(0)
+        assertEquals(null, c.expandedCodigo)
+    }
+
+    @Test
+    fun `fijarLista con lista migra todo el carrito`() {
+        val c = controller()
+        c.addToCart(producto, 0)
+        c.addToCart(producto, 1)
+        c.fijarLista(2)
+        assertTrue(c.cart.all { it.listaIndex == 2 })
+    }
+
+    @Test
+    fun `fijarLista con todas deja el carrito como estaba`() {
+        val c = controller()
+        c.addToCart(producto, 0)
+        c.addToCart(producto, 3)
+        c.fijarLista(-1)
+        assertEquals(listOf(0, 3), c.cart.map { it.listaIndex })
+    }
+
+    @Test
+    fun `addToCart clampa listaIndex a la ultima lista del producto`() {
+        val c = controller()
+        c.addToCart(producto, 99)
+        assertEquals(3, c.cart[0].listaIndex)
+    }
+
+    @Test
+    fun `fijarLista con lista fija clampea por producto con menos precios`() {
+        val c = controller()
+        val p2 = Product.fromPrecios("TEST2", "TEST2 X", listOf(1000, 2000))
+        c.addToCart(p2, 0)
+        c.fijarLista(3)
+        assertEquals(1, c.cart[0].listaIndex) // clampeado a preciosList().lastIndex
+    }
 }

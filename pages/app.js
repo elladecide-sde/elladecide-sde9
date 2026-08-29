@@ -137,6 +137,46 @@ async function subirCatalogo(productos) {
   return res.json(); // { revision, hash, backup }
 }
 
+// ── Rollback (restaurar un backup del Worker) ───────────────────────────────
+async function rollbackCatalogo(backup) {
+  const token = getToken();
+  if (!token) throw new Error('Sesión expirada. Volvé a ingresar.');
+  const res = await fetch(`${API_BASE}/api/v1/admin/rollback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ backup }),
+  });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { msg = (await res.json()).error || msg; } catch (e) { /* ignore */ }
+    if (res.status === 401) { clearToken(); renderAuth(); }
+    throw new Error(msg);
+  }
+  return res.json(); // { revision, hash, restaurado }
+}
+
+function setRollbackStatus(msg, ok) {
+  const el = $('rollbackStatus');
+  el.textContent = msg;
+  el.className = 'status ' + (ok ? 'ok' : 'err');
+}
+
+function bindRollback(btnId, backup, label) {
+  $(btnId).addEventListener('click', async () => {
+    if (!confirm(`¿Restaurar el catálogo desde ${label}?\n\nEl catálogo actual se guarda en el otro backup (no se pierde) y sube la revisión: todas las apps se van a resincronizar solas.`)) return;
+    try {
+      setRollbackStatus(`Restaurando ${label}…`, true);
+      const r = await rollbackCatalogo(backup);
+      setRollbackStatus(`✅ Restaurado ${r.restaurado} — revisión ${r.revision} · hash ${(r.hash || '').slice(0, 8)}…`, true);
+    } catch (e) {
+      setRollbackStatus('❌ ' + e.message, false);
+    }
+  });
+}
+
+bindRollback('rollbackBak', 'bak', 'bak (el último reemplazo)');
+bindRollback('rollbackBak2', 'bak2', 'bak2 (el anterior)');
+
 // ── Cambio de contraseña ────────────────────────────────────────────────────
 async function changePassword(currentPassword, newPassword) {
   const token = getToken();

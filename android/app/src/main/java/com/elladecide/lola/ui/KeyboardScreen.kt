@@ -33,7 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
@@ -64,6 +65,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -76,12 +78,10 @@ import com.elladecide.lola.KeyboardController
 import com.elladecide.lola.Lectura
 import com.elladecide.lola.Mensaje
 import com.elladecide.lola.ModoResultado
-import com.elladecide.lola.Precio
 import com.elladecide.lola.ValorModo
 import com.elladecide.lola.data.ImageEntry
 import com.elladecide.lola.data.Product
 import com.elladecide.lola.emoji.Emoji
-import com.elladecide.lola.emoji.EmojiCategory
 import com.elladecide.lola.emoji.EmojiData
 import com.elladecide.lola.keyboard.AutoRepeat
 import com.elladecide.lola.keyboard.Key
@@ -94,18 +94,20 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 import kotlin.math.floor
 
-// Paleta oscura de LOLA (coincide con la extensión: #1f2c34 / #00d4a8).
-private val LolaBg = Color(0xFF1F2C34)
-private val LolaSurface = Color(0xFF2A3942)
-private val LolaAccent = Color(0xFF00D4A8)
-private val LolaText = Color(0xFFE9EDEF)
-private val LolaMuted = Color(0xFF8696A0)
+// Paleta clara de LOLA (teclas blancas + fondo gris, estilo Gboard).
+private val LolaBg = Color(0xFFE3E6EA)          // fondo del teclado (gris claro)
+private val LolaSurface = Color(0xFFFFFFFF)       // teclas/paneles (blanco)
+private val LolaAccent = Color(0xFF4B5563)        // acento: gris oscuro (accesos, texto fuerte)
+private val LolaText = Color(0xFF1F2937)          // texto sobre teclas blancas (oscuro)
+private val LolaMuted = Color(0xFF6B7280)         // texto secundario
+private val LolaKeyPressed = Color(0xFFCFD5DB)    // tecla presionada (gris)
+private val LolaActive = Color(0xFF6B7280)        // estado activo/encendido (gris medio)
 
-private val LolaColors = darkColorScheme(
+private val LolaColors = lightColorScheme(
     primary = LolaAccent,
     background = LolaBg,
     surface = LolaSurface,
-    onPrimary = Color.Black,
+    onPrimary = Color.White,
     onBackground = LolaText,
     onSurface = LolaText,
 )
@@ -151,19 +153,21 @@ fun KeyboardScreen(controller: KeyboardController) {
             // teclas; el panel de catálogo recibe `panelHeight` explícito (sin
             // weight), así NO compite por espacio con el teclado (spec §17).
             //
-            // En modo LOLA el teclado se queda en su mínimo cómodo
-            // (MIN_KEY_BODY_DP): solo escribe la búsqueda; el protagonista es el
-            // catálogo, que toma todo el resto. Si el viewport es chico, el panel
-            // baja hasta PANEL_MIN_DP (controles esenciales siempre accesibles,
-            // spec §15) y el teclado encoge sus teclas vía `compute()`. En CHAT
-            // no hay panel: el teclado usa todo el alto.
+            // En modo LOLA el teclado se queda en su mínimo cómodo: solo escribe
+            // la búsqueda; el protagonista es el catálogo, que toma todo el resto.
+            // La barra ENVIAR vive FUERA del panel (siempre visible, no depende de
+            // la altura del panel). El piso del panel puede robarle al teclado solo
+            // hasta que las teclas lleguen a un mínimo usable: nunca colapsa (spec
+            // F3) y nunca deja la barra ENVIAR sin su altura. En CHAT no hay panel:
+            // el teclado usa todo. La cinta y el mínimo del panel escalan con la fuente.
+            val fs = density.fontScale.coerceIn(1f, KeyboardMetrics.MAX_FONT_SCALE)
             val panelHeight = if (controller.enModoLola) {
-                (availableHeight - KeyboardMetrics.MIN_KEY_BODY_DP)
-                    .coerceAtLeast(KeyboardMetrics.PANEL_MIN_DP)
+                KeyboardMetrics.lolaPanelHeightDp(availableHeight, fs)
             } else {
                 0f
             }
-            val availableForKeyboard = (availableHeight - panelHeight).coerceAtLeast(0f)
+            val footerBar = if (controller.enModoLola) KeyboardMetrics.footerHeightDp(fs) else 0f
+            val availableForKeyboard = (availableHeight - panelHeight - footerBar).coerceAtLeast(0f)
             val metrics = remember(availableForKeyboard, density.fontScale) {
                 KeyboardMetrics.compute(availableForKeyboard, density.fontScale)
             }
@@ -178,6 +182,7 @@ fun KeyboardScreen(controller: KeyboardController) {
                 viewportH = viewportH,
                 popupController = popupController,
                 panelHeight = panelHeight,
+                footerHeightDp = footerBar,
             )
             popupController.info?.let { PopupAlternativas(it) }
         }
@@ -193,6 +198,7 @@ private fun ContenidoTeclado(
     viewportH: Float,
     popupController: PopupController,
     panelHeight: Float,
+    footerHeightDp: Float,
 ) {
     Column(
         modifier = Modifier
@@ -200,15 +206,25 @@ private fun ContenidoTeclado(
             .fillMaxHeight()
             .padding(metrics.screenPaddingDp.dp),
     ) {
+        // En CHAT con teclas (no panel), el contenido es de alto fijo: el Spacer
+        // con peso lo ancla al borde inferior, dejando el sobrante ARRIBA (como
+        // Gboard). En LOLA el panel ya consume el sobrante; en EMOJI/CLIPBOARD el
+        // panel con weight(1f) llena — meter el spacer ahí los achicaría.
+        if (!controller.enModoLola && controller.capa != KeyboardLayer.EMOJI &&
+            controller.capa != KeyboardLayer.CLIPBOARD
+        ) {
+            Spacer(Modifier.weight(1f))
+        }
+
         // Cinta superior con geometría estable: en CHAT muestra herramientas o
         // sugerencias (una u otra, sin desplazar el teclado); en LOLA la cinta
         // propia (Modo Chat + Expandir).
         if (controller.enModoLola) {
-            ToolbarLola(controller)
+            ToolbarLola(controller, metrics)
         } else if (controller.sugerenciasVisibles) {
-            BarraSugerencias(controller)
+            BarraSugerencias(controller, metrics)
         } else {
-            ToolbarChat(controller)
+            ToolbarChat(controller, metrics)
         }
 
         // Modo LOLA: el catálogo ocupa un alto explícito (panelHeight, derivado
@@ -223,6 +239,7 @@ private fun ContenidoTeclado(
                     .height(panelHeight.dp)
                     .padding(vertical = metrics.spacingDp.dp),
             )
+            BarraEnviar(controller, footerHeightDp, Modifier.fillMaxWidth())
         }
 
         if (controller.capa == KeyboardLayer.EMOJI) {
@@ -232,6 +249,11 @@ private fun ContenidoTeclado(
                 viewportW = viewportW,
                 viewportH = viewportH,
                 popupController = popupController,
+                modifier = Modifier.weight(1f),
+            )
+        } else if (controller.capa == KeyboardLayer.CLIPBOARD) {
+            ClipboardPanel(
+                controller = controller,
                 modifier = Modifier.weight(1f),
             )
         } else {
@@ -256,11 +278,11 @@ private fun ContenidoTeclado(
  *  acceso al teclado de cursor (acrónimo) y al modo LOLA. 123 y 😀 viven en la
  *  fila inferior (spec §7-§10). */
 @Composable
-private fun ToolbarChat(controller: KeyboardController) {
+private fun ToolbarChat(controller: KeyboardController, metrics: KeyboardMetrics) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(KeyboardMetrics.STRIP_HEIGHT_DP.dp),
+            .height(metrics.stripHeightDp.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -268,6 +290,13 @@ private fun ToolbarChat(controller: KeyboardController) {
             controller.press(Key.CURSOR)
         }
         Spacer(Modifier.weight(1f))
+        if (controller.clipboardEnabled) {
+            ToolbarButton(
+                "📋",
+                "Mini portapapeles",
+                controller.capa == KeyboardLayer.CLIPBOARD,
+            ) { controller.toggleClipboard() }
+        }
         ToolbarButton("LOLA", "Modo LOLA", controller.enModoLola) {
             controller.press(Key.LOLA)
         }
@@ -276,11 +305,11 @@ private fun ToolbarChat(controller: KeyboardController) {
 
 /** Cinta estable del modo LOLA: volver a Chat + expandir/contraer. */
 @Composable
-private fun ToolbarLola(controller: KeyboardController) {
+private fun ToolbarLola(controller: KeyboardController, metrics: KeyboardMetrics) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(KeyboardMetrics.STRIP_HEIGHT_DP.dp),
+            .height(metrics.stripHeightDp.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -299,7 +328,7 @@ private fun ToolbarButton(text: String, desc: String, active: Boolean, onClick: 
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
-            .background(if (active) LolaAccent else LolaSurface)
+            .background(if (active) LolaActive else LolaSurface)
             .clickable(onClick = onClick)
             .semantics {
                 contentDescription = desc
@@ -311,7 +340,7 @@ private fun ToolbarButton(text: String, desc: String, active: Boolean, onClick: 
     ) {
         Text(
             text,
-            color = if (active) Color.Black else LolaText,
+            color = if (active) Color.White else LolaText,
             fontWeight = FontWeight.Bold,
             fontSize = 13.sp,
             maxLines = 1,
@@ -322,13 +351,13 @@ private fun ToolbarButton(text: String, desc: String, active: Boolean, onClick: 
 // ── Sugerencias (solo modo CHAT) ────────────────────────────────────────────
 
 @Composable
-private fun BarraSugerencias(controller: KeyboardController) {
+private fun BarraSugerencias(controller: KeyboardController, metrics: KeyboardMetrics) {
     // Cada sugerencia mide su contenido (sin weight): si no entran todas, la
     // fila scrollea en vez de recortar las palabras (spec §11: sin clipping).
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(KeyboardMetrics.STRIP_HEIGHT_DP.dp)
+            .height(metrics.stripHeightDp.dp)
             .horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -425,7 +454,7 @@ private fun PanelLola(
     context: android.content.Context,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier) {
+    Column(modifier = modifier.clipToBounds()) {
         // Buscador (el QWERTY lo alimenta; no abre el IME propio).
         OutlinedTextField(
             value = controller.query,
@@ -464,6 +493,10 @@ private fun PanelLola(
         // Switches de formato del mensaje (LC/LL · N/U · TextoDesc · Valor).
         FormatoSwitches(controller)
 
+        // Modo de lista global: fijá la lista que se aplica a todo el pedido
+        // (Lista 1-4) o dejala en "Todas" para elegirla producto por producto.
+        SelectorLista(controller)
+
         // Descuento: TODOS (global) o MANUAL (por ítem).
         SeccionDescuento(controller)
 
@@ -475,33 +508,49 @@ private fun PanelLola(
         } else {
             Carrito(controller, Modifier.weight(1f))
         }
+    }
+}
 
-        Spacer(Modifier.height(4.dp))
-
-        // Barra inferior: estado + total + enviar.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(controller.estado, color = LolaMuted)
-                if (controller.cart.isNotEmpty()) {
-                    Text(
-                        "Total: ${Mensaje.fmt(controller.totalEfectivo)} EFEC/TRAN",
-                        color = LolaAccent,
-                    )
-                }
+/** Barra fija FUERA del panel LOLA: estado + total + Limpiar + ENVIAR. Vive en
+ *  el Column raíz, después del panel, así queda SIEMPRE visible sin importar la
+ *  altura del panel (el footer ya no forma parte de PanelLola). */
+@Composable
+private fun BarraEnviar(
+    controller: KeyboardController,
+    footerHeightDp: Float,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .height(footerHeightDp.dp)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                controller.estado,
+                color = LolaMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (controller.cart.isNotEmpty()) {
+                Text(
+                    "Total: ${Mensaje.fmt(controller.totalEfectivo)} EFEC/TRAN",
+                    color = LolaAccent,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-            TextButton(
-                onClick = controller::limpiarCart,
-                enabled = controller.cart.isNotEmpty(),
-            ) { Text("Limpiar", color = LolaMuted) }
-            Button(
-                onClick = controller::enviar,
-                enabled = controller.cart.isNotEmpty(),
-            ) { Text("ENVIAR") }
         }
+        TextButton(
+            onClick = controller::limpiarCart,
+            enabled = controller.cart.isNotEmpty(),
+        ) { Text("Limpiar", color = LolaMuted) }
+        Button(
+            onClick = controller::enviar,
+            enabled = controller.cart.isNotEmpty(),
+        ) { Text("ENVIAR") }
     }
 }
 
@@ -518,7 +567,7 @@ private fun FormatoSwitches(controller: KeyboardController) {
         FormatoSwitch("LC", controller.pedidoConfig.lectura == Lectura.LC) { controller.setLectura(Lectura.LC) }
         FormatoSwitch("LL", controller.pedidoConfig.lectura == Lectura.LL) { controller.setLectura(Lectura.LL) }
         Spacer(Modifier.width(4.dp))
-        FormatoSwitch("N", controller.pedidoConfig.concepto == Concepto.N) { controller.setConcepto(Concepto.N) }
+        FormatoSwitch("S/N", controller.pedidoConfig.concepto == Concepto.N) { controller.setConcepto(Concepto.N) }
         FormatoSwitch("U", controller.pedidoConfig.concepto == Concepto.U) { controller.setConcepto(Concepto.U) }
         Spacer(Modifier.width(4.dp))
         val textoDesc = controller.pedidoConfig.textoDesc
@@ -530,19 +579,42 @@ private fun FormatoSwitches(controller: KeyboardController) {
     }
 }
 
+/** Selector global de lista del pedido: "Todas" o Lista 1..4 (fija la lista). */
+@Composable
+private fun SelectorLista(controller: KeyboardController) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "LISTA →",
+            color = LolaMuted,
+            fontWeight = FontWeight.Bold,
+            fontSize = 11.sp,
+        )
+        FormatoSwitch("Todas", controller.defaultListaIndex == -1) { controller.fijarLista(-1) }
+        Mensaje.LISTA_NAMES.forEachIndexed { i, _ ->
+            FormatoSwitch("${i + 1}", controller.defaultListaIndex == i) { controller.fijarLista(i) }
+        }
+    }
+}
+
 @Composable
 private fun FormatoSwitch(label: String, active: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
-            .background(if (active) LolaAccent else LolaSurface)
+            .background(if (active) LolaActive else LolaSurface)
             .clickable(onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             label,
-            color = if (active) Color.Black else LolaText,
+            color = if (active) Color.White else LolaText,
             fontWeight = FontWeight.Bold,
             fontSize = 11.sp,
             maxLines = 1,
@@ -654,7 +726,7 @@ private fun EmojiPanel(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .background(if (selected) LolaAccent else Color.Transparent)
+                            .background(if (selected) LolaActive else Color.Transparent)
                             .clickable { engine.selectCategory(cat) }
                             .semantics {
                                 contentDescription = "Categoría ${cat.name.lowercase()}"
@@ -731,7 +803,7 @@ private fun EmojiCelda(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(if (pressed) LolaAccent else Color.Transparent)
+            .background(if (pressed) LolaKeyPressed else Color.Transparent)
             .onGloballyPositioned {
                 posPx = it.positionInRoot()
                 sizePx = it.size
@@ -800,6 +872,57 @@ private fun EmojiCelda(
     }
 }
 
+// ── Panel del mini portapapeles ────────────────────────────────────────────
+
+@Composable
+private fun ClipboardPanel(controller: KeyboardController, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("Portapapeles", color = LolaText, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            TextButton(
+                onClick = controller::clearClipboard,
+                enabled = controller.clipboardItems.isNotEmpty(),
+            ) { Text("Limpiar", color = LolaMuted) }
+        }
+        if (controller.clipboardItems.isEmpty()) {
+            Text(
+                "Copiá algo y aparece acá (se guarda 24 h).",
+                color = LolaMuted,
+                modifier = Modifier.padding(12.dp),
+            )
+        } else {
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                items(controller.clipboardItems, key = { it.text }) { item ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(LolaSurface)
+                            .clickable { controller.pasteClip(item.text) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            item.text,
+                            color = LolaText,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        TextButton(onClick = { controller.removeClip(item.text) }) {
+                            Text("✕", color = LolaMuted)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ── Popup de alternativas (long-press) ─────────────────────────────────────
 
 @Composable
@@ -814,7 +937,7 @@ private fun PopupAlternativas(info: PopupInfo) {
                 scaleY = scale.value
             }
             .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFF3D4F59)),
+            .background(LolaSurface),
     ) {
         Row {
             info.alternativas.forEachIndexed { i, alt ->
@@ -823,13 +946,13 @@ private fun PopupAlternativas(info: PopupInfo) {
                     modifier = Modifier
                         .width(with(LocalDensity.current) { info.cellPx.toDp() })
                         .height(with(LocalDensity.current) { info.heightPx.toDp() })
-                        .background(if (seleccionada) LolaAccent else Color.Transparent),
+                        .background(if (seleccionada) LolaActive else Color.Transparent),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         alt,
-                        color = if (seleccionada) Color.Black else LolaText,
-                        fontWeight = FontWeight.Bold,
+                        color = if (seleccionada) Color.White else LolaText,
+                        fontWeight = FontWeight.Medium,
                     )
                 }
             }
@@ -882,12 +1005,13 @@ private fun Tecla(
     val viewportHActual by rememberUpdatedState(viewportH)
 
     val bg = when {
-        pressed -> LolaAccent
-        activo -> Color(0xFF3D4F59)
+        pressed -> LolaKeyPressed
+        activo -> LolaActive
         else -> LolaSurface
     }
     val fg = when {
-        pressed -> Color.Black
+        pressed -> LolaText
+        activo -> Color.White
         acento -> LolaAccent
         else -> LolaText
     }
@@ -1038,7 +1162,12 @@ private fun Tecla(
             },
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = fg, fontWeight = FontWeight.Bold, fontSize = metrics.labelSizeSp.sp)
+        Text(
+            label,
+            color = fg,
+            fontWeight = FontWeight.Medium,
+            fontSize = metrics.labelSizeSp.sp,
+        )
     }
 }
 
@@ -1056,11 +1185,15 @@ private fun Resultados(controller: KeyboardController, modifier: Modifier = Modi
     }
     LazyColumn(modifier = modifier) {
         items(controller.results) { p ->
+            val fija = controller.defaultListaIndex
             ProductRow(
                 product = p,
                 expanded = controller.expandedCodigo == p.codigoUnico,
                 imageEntry = controller.imagenDe(p),
-                onToggle = { controller.toggleExpanded(p.codigoUnico) },
+                // Lista fijada (1-4): el toque agrega directo a esa lista, sin
+                // expandir. "Todas": el toque expande para elegir lista.
+                onClick = if (fija >= 0) ({ controller.addToCart(p, fija) }) else ({ controller.toggleExpanded(p.codigoUnico) }),
+                listaFija = fija,
                 onInsertImage = { controller.insertarImagen(p) },
                 onLista = { controller.addToCart(p, it) },
             )
@@ -1073,14 +1206,15 @@ private fun ProductRow(
     product: Product,
     expanded: Boolean,
     imageEntry: ImageEntry?,
-    onToggle: () -> Unit,
+    listaFija: Int,
+    onClick: () -> Unit,
     onInsertImage: () -> Unit,
     onLista: (Int) -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onToggle)
+            .clickable(onClick = onClick)
             .background(LolaSurface, RoundedCornerShape(8.dp))
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
@@ -1107,7 +1241,8 @@ private fun ProductRow(
             Spacer(Modifier.width(4.dp))
             Text(if (expanded) "▾" else "＋", color = LolaAccent)
         }
-        if (expanded) {
+        // Lista fija: no hay chips por ítem (el toque ya agrega con esa lista).
+        if (listaFija < 0 && expanded) {
             Spacer(Modifier.height(4.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                 Mensaje.LISTA_NAMES.forEachIndexed { i, name ->

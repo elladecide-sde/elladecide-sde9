@@ -73,10 +73,12 @@ class ConfigActivity : ComponentActivity() {
         val baseUrlInicial = remember { prefs.getString(LolaPrefs.KEY_BASE_URL, SyncRepository.DEFAULT_BASE_URL) ?: "" }
         val secretInicial = remember { prefs.getString(LolaPrefs.KEY_SECRET, null) ?: "" }
         val imagenesInicial = remember { prefs.getBoolean(LolaPrefs.KEY_IMAGENES_ENABLED, true) }
+        val clipboardInicial = remember { prefs.getBoolean(LolaPrefs.KEY_CLIPBOARD_ENABLED, true) }
 
         var baseUrl by remember { mutableStateOf(baseUrlInicial) }
         var secret by remember { mutableStateOf(secretInicial) }
         var imagenes by remember { mutableStateOf(imagenesInicial) }
+        var clipboard by remember { mutableStateOf(clipboardInicial) }
 
         Column(
             modifier = Modifier
@@ -140,6 +142,27 @@ class ConfigActivity : ComponentActivity() {
                 )
             }
 
+            Spacer(Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Mini portapapeles", color = ConfigText, fontSize = 16.sp)
+                    Text(
+                        "Activo por defecto: guarda lo que copiás por 24 h para pegarlo después (📋). Podés desactivarlo.",
+                        color = ConfigMuted,
+                        fontSize = 13.sp,
+                    )
+                }
+                Switch(
+                    checked = clipboard,
+                    onCheckedChange = { clipboard = it },
+                )
+            }
+
             Spacer(Modifier.height(28.dp))
 
             Button(
@@ -148,6 +171,7 @@ class ConfigActivity : ComponentActivity() {
                         .putString(LolaPrefs.KEY_BASE_URL, baseUrl.trim().ifEmpty { SyncRepository.DEFAULT_BASE_URL })
                         .putString(LolaPrefs.KEY_SECRET, secret.trim())
                         .putBoolean(LolaPrefs.KEY_IMAGENES_ENABLED, imagenes)
+                        .putBoolean(LolaPrefs.KEY_CLIPBOARD_ENABLED, clipboard)
                         .apply()
                     onClose()
                 },

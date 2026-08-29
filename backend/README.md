@@ -157,9 +157,11 @@ cambió; si no, contra el secret `ADMIN_PASSWORD`.
 
 ## Hash canónico
 
-Ver `src/hash.ts`: ordenar por `codigo_unico` → serializar
+Ver `src/hash.ts`: ordenar por `codigo_unico` con comparación por **unidades
+UTF-16** (portable, NO `localeCompare`) → serializar
 `{codigo_unico, nombre, precios}` con precios redondeados → `JSON.stringify`
-sin espacios → SHA-256 hex.
+sin espacios → SHA-256 hex. El cliente Android verifica la integridad local con
+un port exacto (`CatalogHash.kt`, golden tests en `hash.test.ts`).
 
 ## Bump de revisión
 

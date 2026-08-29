@@ -65,11 +65,21 @@ object SearchEngine {
         return 0
     }
 
-    private fun score(p: Product, query: String): Int {
-        if (query.isBlank()) return 1
-        val tokens = tokenize(query)
-        val words = tokenize(p.nombre)
-        val joined = words.joinToString(" ")
+    /** Producto pre-tokenizado: se computa UNA vez al cargar el catálogo. */
+    data class IndexedProduct(
+        val product: Product,
+        val words: List<String>,
+        val joined: String,
+    )
+
+    /** Pre-tokeniza el catálogo completo (en background, al cargar). */
+    fun index(products: List<Product>): List<IndexedProduct> =
+        products.map { p ->
+            val words = tokenize(p.nombre)
+            IndexedProduct(p, words, words.joinToString(" "))
+        }
+
+    private fun scoreWords(words: List<String>, joined: String, tokens: List<String>): Int {
         var total = 0
         for (t in tokens) {
             val s = matchToken(t, words, joined)
@@ -79,12 +89,20 @@ object SearchEngine {
         return total
     }
 
-    fun search(products: List<Product>, query: String): List<Product> {
-        if (query.isBlank()) return products
-        return products
-            .map { it to score(it, query) }
+    /** Búsqueda sobre un índice pre-tokenizado (rápida, sin NFD por llamada). */
+    fun searchIndexed(index: List<IndexedProduct>, query: String): List<Product> {
+        if (query.isBlank()) return index.map { it.product }
+        val tokens = tokenize(query)
+        return index
+            .map { it to scoreWords(it.words, it.joined, tokens) }
             .filter { it.second > 0 }
             .sortedByDescending { it.second }
-            .map { it.first }
+            .map { it.first.product }
+    }
+
+    /** API original (tokeniza en cada llamada): se mantiene para compatibilidad. */
+    fun search(products: List<Product>, query: String): List<Product> {
+        if (query.isBlank()) return products
+        return searchIndexed(index(products), query)
     }
 }

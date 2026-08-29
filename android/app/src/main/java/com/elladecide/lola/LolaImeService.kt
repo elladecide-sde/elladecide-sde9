@@ -166,11 +166,21 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
         val dp = controller.alturaDp()
         // EXPANDED_FILL_DP: pedir todo el alto de la pantalla; el ImeRootView
         // lo clampa al área realmente disponible (sin porcentajes fijos).
-        return if (dp < 0) {
-            resources.displayMetrics.heightPixels
+        if (dp < 0) return resources.displayMetrics.heightPixels
+        val density = resources.displayMetrics.density
+        val screenH = resources.displayMetrics.heightPixels
+        // Fracción del alto de pantalla para que el teclado crezca en pantallas
+        // grandes (tablets) en vez de quedar clavado en un dp fijo. El PISO es
+        // el dp de cada modo (pantallas chicas/landscape no bajan de ahí); el
+        // ImeRootView clampa al área real, así nunca desborda.
+        val fraccion = if (controller.enModoLola) {
+            KeyboardController.LOLA_SCREEN_FRACTION
         } else {
-            (dp * resources.displayMetrics.density).toInt()
+            KeyboardController.CHAT_SCREEN_FRACTION
         }
+        val escalado = (screenH * fraccion).toInt()
+        val piso = (dp * density).toInt()
+        return maxOf(escalado, piso)
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
@@ -182,6 +192,7 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
 
     override fun onDestroy() {
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
+        controller.cerrarPortapapeles()
         super.onDestroy()
     }
 

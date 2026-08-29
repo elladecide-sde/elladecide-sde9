@@ -116,20 +116,23 @@ object EmojiData {
         return find(base)
     }
 
-    /** Todo el catálogo, sin duplicados. */
-    fun all(): List<Emoji> = BY_CATEGORY.values.flatten().distinctBy { it.glyph }
+    /** Todo el catálogo, sin duplicados (cacheado — solo lectura). */
+    private val ALL: List<Emoji> by lazy { BY_CATEGORY.values.flatten().distinctBy { it.glyph } }
+
+    /** Nombres normalizados (minúsculas sin acentos) — precomputados para la búsqueda. */
+    private val ALL_HAYSTACKS: List<String> by lazy { ALL.map { normalize(it.name) } }
+
+    fun all(): List<Emoji> = ALL
 
     /**
      * Búsqueda por nombre: tokens en cualquier orden, sin distinguir
      * mayúsculas/acentos ("corazon roto" y "CORAZÓN ROTO" matchean igual).
+     * Usa haystacks precomputados: O(emojis × tokens) con contains, sin NFD por llamada.
      */
     fun search(query: String): List<Emoji> {
         val tokens = tokenize(query)
         if (tokens.isEmpty()) return emptyList()
-        return all().filter { e ->
-            val haystack = normalize(e.name)
-            tokens.all { haystack.contains(it) }
-        }
+        return ALL.filterIndexed { i, _ -> tokens.all { ALL_HAYSTACKS[i].contains(it) } }
     }
 
     /**

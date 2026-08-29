@@ -1,5 +1,6 @@
 package com.elladecide.lola
 
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -30,6 +31,7 @@ import com.elladecide.lola.language.SuggestionProvider
 import com.elladecide.lola.search.SearchEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -68,7 +70,7 @@ class KeyboardController(
 ) {
     var query by mutableStateOf("")
     var results by mutableStateOf<List<Product>>(emptyList())
-    var modo by mutableStateOf(ModoResultado.TEXTO)
+    var modo by mutableStateOf(ModoResultado.PNG)
     var estado by mutableStateOf("Cargando catálogo…")
     var cart by mutableStateOf<List<CartItem>>(emptyList())
     var descuento by mutableStateOf(15)
@@ -83,6 +85,15 @@ class KeyboardController(
 
     /** Descuento global (TODOS) o por ítem (MANUAL). */
     var descuentoModo by mutableStateOf(DescuentoModo.TODOS)
+
+    /**
+     * Lista fijada para TODO el pedido (modo de lista global): -1 = "Todas"
+     * (se elige lista al expandir cada producto); 0..3 = Lista 1..4. Fijarla
+     * migra el pedido entero a esa lista (cada ítem se reasigna, ver
+     * [fijarLista]).
+     */
+    var defaultListaIndex by mutableStateOf(-1)
+        private set
 
     /** Ítem en edición de descuento (modo MANUAL) + descuento pendiente. */
     var editingCartIndex by mutableStateOf<Int?>(null)
@@ -129,14 +140,50 @@ class KeyboardController(
     /** True cuando la barra de sugerencias debe mostrarse (solo modo CHAT). */
     val sugerenciasVisibles: Boolean
         get() = !enModoLola && capa != KeyboardLayer.EMOJI && capa != KeyboardLayer.CURSOR &&
+            capa != KeyboardLayer.CLIPBOARD &&
             suggestionsEnabled && profile.suggestionsAllowed && suggestions.isNotEmpty()
 
     /** Capa visible, delegada al motor. */
     val capa: KeyboardLayer get() = keyEngine.layer
 
     private var productos: List<Product> = emptyList()
+
+    /** Índice pre-tokenizado del catálogo para búsqueda rápida (build una vez). */
+    private var catalogoIndex: List<SearchEngine.IndexedProduct> = emptyList()
+    private var searchJob: Job? = null
+    private var searchGen = 0
+
+    /** Cache producto→imagen (el match es O(índice); se memoiza por codigoUnico). */
+    private val imagenCache = mutableMapOf<String, ImageEntry?>()
     private var lastScannedUri: String? = null
     private var appContext: Context? = null
+
+    // ── Mini portapapeles (local, opt-in) ──────────────────────────────────
+    var clipboardEnabled by mutableStateOf(false)
+        private set
+
+    var clipboardItems by mutableStateOf<List<ClipboardRepository.ClipItem>>(emptyList())
+        private set
+
+    private val clipListener = ClipboardManager.OnPrimaryClipChangedListener {
+        if (!clipboardEnabled) return@OnPrimaryClipChangedListener
+        val ctx = appContext ?: return@OnPrimaryClipChangedListener
+        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            ?: return@OnPrimaryClipChangedListener
+        val text = try {
+            cm.primaryClip
+                ?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(ctx)?.toString()
+        } catch (e: SecurityException) {
+            // Lectura en un momento no permitido (check de foreground en API 29+):
+            // se ignora, el IME no debe crashear por un clipboard mis-timed.
+            return@OnPrimaryClipChangedListener
+        }
+        if (!text.isNullOrBlank()) {
+            val prefs = LolaPrefs.get(ctx)
+            clipboardItems = ClipboardRepository.add(ClipboardRepository.load(prefs), text, System.currentTimeMillis())
+                .also { ClipboardRepository.save(prefs, it) }
+        }
+    }
 
     val totalEfectivo: Int get() = Precio.totales(cart, descuento).second
 
@@ -156,13 +203,24 @@ class KeyboardController(
             valorModo = enumOf(ValorModo.entries, prefs.getString(LolaPrefs.KEY_VALOR_MODO, null), ValorModo.LISTA),
         )
         descuentoModo = enumOf(DescuentoModo.entries, prefs.getString(LolaPrefs.KEY_DESCUENTO_MODO, null), DescuentoModo.TODOS)
+        defaultListaIndex = prefs.getInt(LolaPrefs.KEY_LISTA_DEFAULT, -1)
+            .coerceIn(-1, Mensaje.LISTA_NAMES.size - 1)
+        modo = enumOf(ModoResultado.entries, prefs.getString(LolaPrefs.KEY_MODO_RESULTADO, null), ModoResultado.PNG)
+        clipboardEnabled = prefs.getBoolean(LolaPrefs.KEY_CLIPBOARD_ENABLED, true)
+        if (clipboardEnabled) {
+            clipboardItems = ClipboardRepository.load(prefs)
+            (appContext.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)
+                ?.addPrimaryClipChangedListener(clipListener)
+        }
         scope.launch {
             val count = withContext(Dispatchers.IO) { db.productDao().count() }
             if (count == 0) {
                 SeedCatalog.sembrar(appContext, db)
             }
+            var res: SyncRepository.Resultado? = null
+            var errorSync: String? = null
             try {
-                SyncRepository(
+                res = SyncRepository(
                     db.productDao(),
                     db.syncMetaDao(),
                     baseUrl = prefs.getString(LolaPrefs.KEY_BASE_URL, null) ?: SyncRepository.DEFAULT_BASE_URL,
@@ -171,18 +229,36 @@ class KeyboardController(
             } catch (e: SyncProtocolException) {
                 // El backend respondió mal (HTTP no 2xx o JSON inválido): es un
                 // bug de contrato, NO se silencia. Se expone para que se vea.
-                estado = "Sync falló: ${e.message}"
+                errorSync = e.message
             } catch (e: SyncNetworkException) {
                 // sin backend alcanzable → catálogo local (offline-first)
             }
             productos = withContext(Dispatchers.IO) { db.productDao().getAll() }
-            estado = "${productos.size} productos listos"
+            catalogoIndex = withContext(Dispatchers.Default) { SearchEngine.index(productos) }
+            estado = when {
+                errorSync != null -> "Sync falló: $errorSync"
+                res != null && res.motivo != null -> "${res.productos} productos · ${res.motivo}"
+                res != null && res.sincronizado -> "${res.productos} productos · sincronizado"
+                else -> "${productos.size} productos listos"
+            }
+            // Si el usuario ya estaba buscando cuando terminó de cargar, refrescá.
+            if (query.isNotBlank()) onQueryChanged(query)
         }
     }
 
     fun onQueryChanged(q: String) {
         query = q
-        results = if (q.isBlank()) emptyList() else SearchEngine.search(productos, q)
+        searchJob?.cancel()
+        val gen = ++searchGen
+        if (q.isBlank()) {
+            results = emptyList()
+            return
+        }
+        // Búsqueda en background (Default); se descarta si llegó una query más nueva.
+        searchJob = scope.launch {
+            val found = withContext(Dispatchers.Default) { SearchEngine.searchIndexed(catalogoIndex, q) }
+            if (gen == searchGen) results = found
+        }
     }
 
     fun toggleExpanded(codigo: String) {
@@ -190,7 +266,8 @@ class KeyboardController(
     }
 
     fun addToCart(product: Product, listaIndex: Int) {
-        cart = cart + CartItem(product, listaIndex)
+        val idx = listaIndex.coerceIn(-1, product.preciosList().lastIndex)
+        cart = cart + CartItem(product, idx)
         expandedCodigo = null
         estado = "${cart.size} ítem(s) en el pedido"
     }
@@ -212,6 +289,7 @@ class KeyboardController(
 
     fun toggleModoResultado() {
         modo = if (modo == ModoResultado.TEXTO) ModoResultado.PNG else ModoResultado.TEXTO
+        appContext?.let { LolaPrefs.get(it).edit().putString(LolaPrefs.KEY_MODO_RESULTADO, modo.name).apply() }
     }
 
     fun enviar() {
@@ -249,6 +327,23 @@ class KeyboardController(
 
     fun setValorModo(v: ValorModo) {
         pedidoConfig = pedidoConfig.copy(valorModo = v)
+        persistirPedidoConfig()
+    }
+
+    /**
+     * Fija la lista global del pedido: -1 = Todas (elegir por ítem al expandir),
+     * 0..3 = Lista 1..4. Migra TODO el pedido a la lista elegida (cada ítem ya
+     * agregado se reasigna); con -1 ("Todas") el carrito queda como está. Además
+     * cierra cualquier producto expandido para que no quede el "▾" sin sus chips.
+     */
+    fun fijarLista(i: Int) {
+        defaultListaIndex = i.coerceIn(-1, Mensaje.LISTA_NAMES.size - 1)
+        if (defaultListaIndex >= 0) {
+            // Clamp por producto: los productos con menos precios no crashean
+            // `preciosList()[listaIndex]` en totales/mensaje/render (spec).
+            cart = cart.map { it.copy(listaIndex = defaultListaIndex.coerceIn(-1, it.product.preciosList().lastIndex)) }
+        }
+        expandedCodigo = null
         persistirPedidoConfig()
     }
 
@@ -304,6 +399,7 @@ class KeyboardController(
             ?.putBoolean(LolaPrefs.KEY_TEXTO_DESC, pedidoConfig.textoDesc)
             ?.putString(LolaPrefs.KEY_VALOR_MODO, pedidoConfig.valorModo.name)
             ?.putString(LolaPrefs.KEY_DESCUENTO_MODO, descuentoModo.name)
+            ?.putInt(LolaPrefs.KEY_LISTA_DEFAULT, defaultListaIndex)
             ?.apply()
     }
 
@@ -495,19 +591,46 @@ class KeyboardController(
     fun rescanear(context: Context) {
         val prefs = LolaPrefs.get(context)
         imagenesEnabled = prefs.getBoolean(LolaPrefs.KEY_IMAGENES_ENABLED, true)
+        // Mini portapapeles: se aplica en vivo (sin recrear el servicio). El
+        // toggle lo cambia en Ajustes y acá se re-lee en cada onCreateInputView.
+        clipboardEnabled = prefs.getBoolean(LolaPrefs.KEY_CLIPBOARD_ENABLED, true)
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        if (clipboardEnabled) {
+            clipboardItems = ClipboardRepository.load(prefs)
+            cm?.removePrimaryClipChangedListener(clipListener)
+            cm?.addPrimaryClipChangedListener(clipListener)
+        } else {
+            cm?.removePrimaryClipChangedListener(clipListener)
+            clipboardItems = emptyList()
+            // Purga el historial persistido de 24h: deshabilitado = sin datos.
+            ClipboardRepository.save(prefs, emptyList())
+        }
         val uriStr = prefs.getString(LolaPrefs.KEY_FOLDER_URI, null) ?: return
         if (uriStr == lastScannedUri) return
         lastScannedUri = uriStr
         scope.launch {
             val uri = Uri.parse(uriStr)
             imagenes = withContext(Dispatchers.IO) { ImageRepository.scan(context, uri) }
+            imagenCache.clear()
             estado = "${imagenes.size} imágenes listas"
         }
     }
 
-    fun imagenDe(product: Product): ImageEntry? =
-        if (imagenes.isEmpty() || !imagenesEnabled) null
-        else ImageRepository.buscar(product, imagenes).firstOrNull()
+    /** Quita el listener del portapapeles: evita listeners duplicados/leaks
+     *  cuando el IME se destruye y recrea mientras el proceso sigue vivo. */
+    fun cerrarPortapapeles() {
+        (appContext?.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)
+            ?.removePrimaryClipChangedListener(clipListener)
+    }
+
+    fun imagenDe(product: Product): ImageEntry? {
+        if (imagenes.isEmpty() || !imagenesEnabled) return null
+        // Memoizado por codigoUnico: el match (O(índice)) corre UNA vez por
+        // producto, no en cada recomposición de la fila.
+        return imagenCache.getOrPut(product.codigoUnico) {
+            ImageRepository.buscar(product, imagenes).firstOrNull()
+        }
+    }
 
     fun insertarImagen(product: Product) {
         val entry = imagenDe(product) ?: run {
@@ -517,10 +640,36 @@ class KeyboardController(
         onCommitImageFile(entry.uri)
     }
 
+    // ── Mini portapapeles ──────────────────────────────────────────────────
+
+    fun toggleClipboard() = keyEngine.toggleClipboard()
+
+    fun pasteClip(text: String) {
+        onCommitText(text)
+    }
+
+    fun removeClip(text: String) {
+        val prefs = appContext?.let { LolaPrefs.get(it) } ?: return
+        clipboardItems = ClipboardRepository.remove(clipboardItems, text)
+            .also { ClipboardRepository.save(prefs, it) }
+    }
+
+    fun clearClipboard() {
+        val prefs = appContext?.let { LolaPrefs.get(it) } ?: return
+        clipboardItems = emptyList()
+        ClipboardRepository.save(prefs, emptyList())
+    }
+
     companion object {
-        /** Alturas de la ventana del IME en dp (adaptativas al viewport real). */
-        const val CHAT_HEIGHT_DP = 272
+        /** Pisos de la ventana del IME en dp (se escalan con la pantalla). */
+        const val CHAT_HEIGHT_DP = 284
         const val LOLA_COMPACT_HEIGHT_DP = 480
+
+        /** Fracción del alto de pantalla: el teclado crece en pantallas grandes
+         *  (tablets) en vez de quedar clavado en un dp fijo. El piso es el dp de
+         *  cada modo; `ImeRootView` clampa al área real (nunca desborda). */
+        const val CHAT_SCREEN_FRACTION = 0.45f
+        const val LOLA_SCREEN_FRACTION = 0.55f
 
         /**
          * Sentinel: en LOLA EXPANDIDO el IME pide TODO el alto disponible; el

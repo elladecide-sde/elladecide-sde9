@@ -1,0 +1,38 @@
+{
+  "inputs": [
+    {
+      "name": "serving_default_ctx:0",
+      "shape": [
+        1,
+        5
+      ],
+      "dtype": "<class 'numpy.int32'>"
+    },
+    {
+      "name": "serving_default_feats:0",
+      "shape": [
+        1,
+        4
+      ],
+      "dtype": "<class 'numpy.float32'>"
+    },
+    {
+      "name": "serving_default_cand:0",
+      "shape": [
+        1,
+        1
+      ],
+      "dtype": "<class 'numpy.int32'>"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "StatefulPartitionedCall_1:0",
+      "shape": [
+        1,
+        1
+      ],
+      "dtype": "<class 'numpy.float32'>"
+    }
+  ]
+}

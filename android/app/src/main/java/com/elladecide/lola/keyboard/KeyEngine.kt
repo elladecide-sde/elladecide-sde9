@@ -44,7 +44,7 @@ class KeyEngine {
         KeyboardLayer.LETTERS -> Layouts.LETTERS
         KeyboardLayer.SYMBOLS -> Layouts.SYMBOLS
         KeyboardLayer.CURSOR -> Layouts.CURSOR
-        KeyboardLayer.EMOJI -> Layouts.LETTERS
+        KeyboardLayer.EMOJI, KeyboardLayer.CLIPBOARD -> Layouts.LETTERS
     }
 
     /** Fila inferior compartida (123 · coma · emoji · espacio · punto · enter). */
@@ -152,6 +152,11 @@ class KeyEngine {
     /** Fija mayúsculas (doble tap / long-press sobre Shift). */
     fun lockShift() {
         shift = ShiftState.BLOQUEO
+    }
+
+    /** Abre/cierra el panel del mini portapapeles (se renderiza en la UI). */
+    fun toggleClipboard() {
+        layer = if (layer == KeyboardLayer.CLIPBOARD) KeyboardLayer.LETTERS else KeyboardLayer.CLIPBOARD
     }
 
     /**
