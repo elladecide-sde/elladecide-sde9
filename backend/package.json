@@ -10,8 +10,11 @@
     "db:init": "wrangler d1 execute lola-db --remote --file ./schema.sql",
     "db:init:local": "wrangler d1 execute lola-db --local --file ./schema.sql",
     "db:migrate": "wrangler d1 execute lola-db --remote --file ./scripts/migrate.sql",
+    "db:reset": "wrangler d1 execute lola-db --remote --file ./scripts/reset.sql",
+    "db:reset:local": "wrangler d1 execute lola-db --local --file ./scripts/reset.sql",
     "import": "tsx scripts/import-catalogo.ts",
-    "test": "tsx --test src/*.test.ts"
+    "test": "tsx --test src/*.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241127.0",

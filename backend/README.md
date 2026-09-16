@@ -105,19 +105,23 @@ npx wrangler login
 # 1) Crear la base D1 y copiar el database_id al wrangler.jsonc
 npx wrangler d1 create lola-db
 
-# 2) Crear las tablas (schema.sql crea TODO incluyendo backups + seed)
-npm run db:init:local     # dev (SQLite local)
-npm run db:init           # producción
-
-# 3) Migración idempotente (backups + seed, seguro correr múltiples veces)
-npm run db:migrate:local  # dev
-npm run db:migrate        # producción
-
-# 4) Si la base es VIEJA (sin columna backup_state), correr UNA VEZ:
+# 2) Si la base es VIEJA (sin columna backup_state), migrar antes de inicializar:
 npx wrangler d1 execute lola-db --remote --command \
   "ALTER TABLE metadata ADD COLUMN backup_state TEXT NOT NULL DEFAULT '{\"newest\":\"bak2\"}'"
 
-# 5) Secrets de admin (JWT)
+# 3) Crear las tablas (schema.sql crea TODO incluyendo backups + seed)
+npm run db:init:local     # dev (SQLite local)
+npm run db:init           # producción
+
+# 4) Migración idempotente (backups + seed, seguro correr múltiples veces)
+npm run db:migrate:local  # dev
+npm run db:migrate        # producción
+
+# 5) Limpieza total (SOLO DEV / RESET COMPLETO si necesitás arrancar de cero)
+npm run db:reset:local    # dev
+npm run db:reset          # producción
+
+# 6) Secrets de admin (JWT)
 #    Local: creá backend/.dev.vars con
 #      ADMIN_USER=admin
 #      ADMIN_PASSWORD=devpass
@@ -462,9 +466,9 @@ un port exacto (`CatalogHash.kt`, golden tests en `hash.test.ts`).
 El workflow `.github/workflows/backend.yml` se ejecuta al pushear a `main`
 con cambios en `backend/`:
 
-1. `schema.sql` → estructura completa (idempotente)
-2. `migrate.sql` → backups + seed (idempotente)
-3. `ALTER TABLE` → agrega `backup_state` si falta (base vieja, tolera error)
+1. `ALTER TABLE` → agrega `backup_state` si falta (base vieja, tolera error)
+2. `schema.sql` → estructura completa (idempotente)
+3. `migrate.sql` → backups + seed (idempotente)
 4. `wrangler deploy` → deploy del Worker
 
 Secrets de GitHub requeridos:

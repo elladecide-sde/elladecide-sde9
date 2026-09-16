@@ -91,6 +91,6 @@ CREATE TABLE IF NOT EXISTS producto_categoria (
 CREATE INDEX IF NOT EXISTS idx_pc_categoria ON producto_categoria(categoria_id);
 
 -- ── Seed del singleton de metadata ──────────────────────────────────────────
-INSERT INTO metadata (key, revision_number, catalog_hash, backup_state)
-VALUES ('catalog', 0, '', '{"newest":"bak2"}')
+INSERT INTO metadata (key)
+VALUES ('catalog')
 ON CONFLICT(key) DO NOTHING;

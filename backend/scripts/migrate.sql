@@ -29,8 +29,8 @@ CREATE TABLE IF NOT EXISTS products_bak2 (
 );
 
 -- Seed de metadata si no existe (base fresca sin el INSERT de schema.sql).
-INSERT OR IGNORE INTO metadata (key, revision_number, catalog_hash, backup_state)
-VALUES ('catalog', 0, '', '{"newest":"bak2"}');
+INSERT OR IGNORE INTO metadata (key)
+VALUES ('catalog');
 
 -- Poblar bak con el catálogo activo SOLO si bak está vacío (primera migración).
 INSERT INTO products_bak (codigo_unico, nombre, precios, updated_at)

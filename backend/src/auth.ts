@@ -31,6 +31,14 @@ function base64urlDecode(s: string): Uint8Array {
   return bytes;
 }
 
+/** Web Crypto exige un ArrayBuffer propio; evita depender del backing store de
+ * un Uint8Array, que TypeScript moderno puede tipar como SharedArrayBuffer. */
+function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
 async function hmacKey(secret: string, usage: 'sign' | 'verify'): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     'raw',
@@ -64,7 +72,7 @@ export async function verifyJwt(secret: string, token: string): Promise<Record<s
   const [h, p, sig] = parts;
   try {
     const key = await hmacKey(secret, 'verify');
-    const ok = await crypto.subtle.verify('HMAC', key, base64urlDecode(sig), encoder.encode(`${h}.${p}`));
+    const ok = await crypto.subtle.verify('HMAC', key, asArrayBuffer(base64urlDecode(sig)), encoder.encode(`${h}.${p}`));
     if (!ok) return null;
     const payload = JSON.parse(decoder.decode(base64urlDecode(p))) as Record<string, unknown>;
     if (typeof payload.exp !== 'number' || payload.exp < Math.floor(Date.now() / 1000)) return null;
@@ -118,7 +126,7 @@ export async function hashPassword(password: string, saltHex: string): Promise<s
     ['deriveBits'],
   );
   const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', hash: 'SHA-256', salt: fromHex(saltHex), iterations: 100_000 },
+    { name: 'PBKDF2', hash: 'SHA-256', salt: asArrayBuffer(fromHex(saltHex)), iterations: 100_000 },
     keyMaterial,
     256,
   );
