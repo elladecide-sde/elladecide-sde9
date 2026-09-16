@@ -57,8 +57,18 @@ Resultado: minúscula, sin diacríticos, con ñ.
 El BK-tree y el cálculo de distancia operan sobre formas **normalizadas**.
 
 ### 3.2 Distancia de edición — `bk_tree.edit_distance`
-Levenshtein estándar: inserción=1, eliminación=1, sustitución=1,
-**transposición=1** (Damerau-Levenshtein). Sin pesos de teclado en la distancia.
+Levenshtein estándar: inserción=1, eliminación=1 y sustitución=1.
+**No aplica una operación especial de transposición**: invertir dos letras
+adyacentes cuesta 2. Esto replica las features con las que se entrenó el modelo;
+cambiar a Damerau-Levenshtein exige reentrenar y volver a medir el re-ranker.
+
+### 3.3 Decisión de compatibilidad español/Kotlin (2026-08-29)
+- La `ñ` se conserva siempre y **no** colisiona con `n`. Python y Kotlin deben
+  verificar expresamente casos como `año != ano`.
+- Kotlin replica Levenshtein común porque el `.tflite` fue entrenado con esa
+  implementación.
+- Si un agente futuro cambia normalización o distancia, debe modificar ambos
+  runtimes, reentrenar el modelo y ejecutar los benchmarks de §8.
 
 ### 3.3 `correct_word` (candidatos)
 - Lookup exacto primero: si `normalize_for_search(word)` existe en el diccionario
@@ -173,6 +183,11 @@ implementation 'org.tensorflow:tensorflow-lite-select-tf-ops:X.Y.Z'
 (En Python esto corre vía `TfLiteFlexDelegate`; el `.tflite` se validó
 directamente en este entorno, no solo el `.h5`.)
 
+El artefacto Flex contiene bibliotecas nativas para varias ABI. Por eso un APK
+debug universal puede ser muy grande (~300 MB); para distribución usar Android
+App Bundle, que entrega a cada dispositivo solo su arquitectura. No eliminar
+ABI a ciegas durante desarrollo porque impediría probar en otros dispositivos.
+
 ---
 
 ## 8. Métricas de referencia (para re-validar tras portar)
@@ -185,5 +200,8 @@ directamente en este entorno, no solo el `.h5`.)
 - 3 casos objetivo (OK con y sin contexto):
   `ouedo→puedo`, `xausqr→causar`, `juefos→juegos`.
 
-Verificación en Python: `python check_cases.py` (usa el `.tflite` vía
-`.venv-neural`), `python benchmark_ranker.py --n 300`.
+Verificación en Python: `python check_cases.py` (usa el `.tflite` vía un
+entorno con TensorFlow). `benchmark_ranker.py --n 300` además necesita los
+artefactos de entrenamiento `train_ranker.py`, `gen_typos.py` y el corpus
+`generated/corpus/es.sentences.txt`; no forman parte de este paquete de
+inferencia. La verificación del port Kotlin vive en los tests de `language/`.

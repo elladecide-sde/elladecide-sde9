@@ -1,5 +1,10 @@
 # Handoff — fix de corrector + re-ranker neural
 
+> Decisión posterior de integración (2026-08-29): se corrigió la normalización
+> para preservar `ñ` como letra distinta de `n`. La distancia sigue siendo
+> Levenshtein común, sin transposición a costo 1, para conservar paridad con las
+> features usadas al entrenar `neural_ranker.tflite`. Ver `INTEGRATION.md` §3.
+
 ## Qué cambió y por qué
 
 ### 1. `corrector.py` — bug real en `correct_word` (el más importante)

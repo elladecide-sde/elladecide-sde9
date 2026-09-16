@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT))
 
 import tensorflow as tf
 
-TFLITE = ROOT / "generated" / "neural_ranker.tflite"
+TFLITE = ROOT / "neural_ranker.tflite"
 CTX_LEN = 5
 FEAT_DIM = 4
 PAD_ID = 0
@@ -67,7 +67,7 @@ def main() -> int:
         print("  ", d["name"], d["shape"], d["dtype"])
     cid_casa = 1  # 'de' suele ser id 1; para probar usamos un id conocido
     # buscar id de 'casa' desde palabras_comunes
-    for i, line in enumerate(open(ROOT / "data" / "palabras_comunes.txt", encoding="utf-8")):
+    for i, line in enumerate(open(ROOT / "palabras_comunes.txt", encoding="utf-8")):
         if line.strip() == "casa":
             cid_casa = i + 1
             break

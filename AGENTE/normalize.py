@@ -53,8 +53,18 @@ def normalize_for_search(word: str) -> str:
     """
     if not word:
         return ""
-    normalized = unicodedata.normalize('NFD', word.lower())
-    result = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+    # La ñ es una letra propia del español. NFD la descompone en ``n`` +
+    # COMBINING TILDE, por lo que filtrar todas las marcas sin protegerla
+    # colisionaría palabras como "año" y "ano". Normalizamos carácter por
+    # carácter y preservamos explícitamente ñ.
+    result_chars: list[str] = []
+    for char in word.lower():
+        if char == "ñ":
+            result_chars.append(char)
+            continue
+        decomposed = unicodedata.normalize('NFD', char)
+        result_chars.extend(ch for ch in decomposed if unicodedata.category(ch) != 'Mn')
+    result = ''.join(result_chars)
     return result
 
 

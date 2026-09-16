@@ -25,11 +25,12 @@ from __future__ import annotations
 from normalize import normalize_for_search, diacritic_cost, DIACRITIC_COST_DEFAULT
 from corrector import build_bk_tree_from_dict, Candidate, correct_word
 from bk_tree import edit_distance
-import os, struct
+import json, os, struct
 import numpy as np
 
 # Diccionario real del proyecto: ruta relativa desde el directorio del script
-DICT_PATH = "generated/dictionary.bin"
+ROOT = os.path.dirname(os.path.abspath(__file__))
+DICT_PATH = os.path.join(ROOT, "dictionary.bin")
 
 def _parse_dictionary_bin(path: str) -> tuple[list[str], list[int]]:
     """
@@ -141,8 +142,10 @@ _RANKER_ALPHA = float(os.environ.get("NEURAL_ALPHA", "0.3"))
 def _get_ranker_vocab() -> tuple[dict[str, int], int]:
     global _RANKER_VOCAB, _RANKER_OOV
     if _RANKER_VOCAB is None:
-        from train_ranker import build_vocab
-        _RANKER_VOCAB, _RANKER_OOV = build_vocab()
+        with open(os.path.join(ROOT, "vocab.json"), encoding="utf-8") as fh:
+            _RANKER_VOCAB = {str(word): int(idx) for word, idx in json.load(fh).items()}
+        with open(os.path.join(ROOT, "vocab_meta.json"), encoding="utf-8") as fh:
+            _RANKER_OOV = int(json.load(fh)["oov_id"])
     return _RANKER_VOCAB, _RANKER_OOV
 
 

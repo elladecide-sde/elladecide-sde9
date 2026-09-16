@@ -78,8 +78,10 @@ class BKTree:
     def _strip_diacritics(self, s: str) -> str:
         """Quita diacrítos tipo normalize_for_search."""
         import unicodedata
-        normalized = unicodedata.normalize('NFD', s.lower())
-        return ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+        # Una sola fuente de verdad: también protege la ñ de la descomposición
+        # NFD. El import local evita un ciclo al nivel de módulo.
+        from normalize import normalize_for_search
+        return normalize_for_search(s)
 
     def search(self, word: str, max_dist: int) -> list[str]:
         """
