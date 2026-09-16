@@ -41,8 +41,11 @@ data class KeyboardMetrics(
         const val POPUP_CELL_DP = 48f
         const val POPUP_HEIGHT_DP = 56f
 
-        /** Base de la cinta superior (se multiplica por el font scale). */
-        const val STRIP_HEIGHT_DP = 44f
+        /**
+         * Cinta compacta: deja solo una línea funcional sobre las teclas, sin
+         * convertir el IME en un bloque vacío que tape la conversación.
+         */
+        const val STRIP_HEIGHT_DP = 32f
 
         /** Base del mínimo del panel LOLA (se multiplica por el font scale).
          *  Cubre los controles fijos del catálogo: buscador, acciones, switches

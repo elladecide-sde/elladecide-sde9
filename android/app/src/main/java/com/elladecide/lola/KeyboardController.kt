@@ -32,6 +32,7 @@ import com.elladecide.lola.search.SearchEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -64,6 +65,7 @@ class KeyboardController(
     private val onReplaceComposing: (String) -> Unit,
     private val onUndo: () -> Unit,
     private val onCurrentWord: () -> String,
+    private val onContextBefore: () -> String = { "" },
     private val onDeleteWord: () -> Unit,
     private val onSyncEditor: () -> Unit,
     private val suggestionProvider: SuggestionProvider,
@@ -152,6 +154,8 @@ class KeyboardController(
     private var catalogoIndex: List<SearchEngine.IndexedProduct> = emptyList()
     private var searchJob: Job? = null
     private var searchGen = 0
+    private var suggestionJob: Job? = null
+    private var suggestionGen = 0
 
     /** Cache producto→imagen (el match es O(índice); se memoiza por codigoUnico). */
     private val imagenCache = mutableMapOf<String, ImageEntry?>()
@@ -168,21 +172,7 @@ class KeyboardController(
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener {
         if (!clipboardEnabled) return@OnPrimaryClipChangedListener
         val ctx = appContext ?: return@OnPrimaryClipChangedListener
-        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            ?: return@OnPrimaryClipChangedListener
-        val text = try {
-            cm.primaryClip
-                ?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(ctx)?.toString()
-        } catch (e: SecurityException) {
-            // Lectura en un momento no permitido (check de foreground en API 29+):
-            // se ignora, el IME no debe crashear por un clipboard mis-timed.
-            return@OnPrimaryClipChangedListener
-        }
-        if (!text.isNullOrBlank()) {
-            val prefs = LolaPrefs.get(ctx)
-            clipboardItems = ClipboardRepository.add(ClipboardRepository.load(prefs), text, System.currentTimeMillis())
-                .also { ClipboardRepository.save(prefs, it) }
-        }
+        captureSystemClipboard(ctx)
     }
 
     val totalEfectivo: Int get() = Precio.totales(cart, descuento).second
@@ -427,14 +417,24 @@ class KeyboardController(
     }
 
     /** Borra un carácter: de la búsqueda si estamos en modo LOLA, o de la app. */
-    fun borrar() {
+    fun borrar(actualizarSugerencias: Boolean = true) {
         if (enModoLola) {
             onQueryChanged(query.dropLast(1))
         } else {
             onDelete()
-            refreshSuggestions()
+            if (actualizarSugerencias) refreshSuggestions()
         }
     }
+
+    /**
+     * Variante para el autorepeat de Backspace. Durante la pulsación sostenida
+     * no consulta el editor ni relanza la predicción por cada carácter: esas
+     * llamadas síncronas eran el tirón perceptible en WhatsApp.
+     */
+    fun borrarDuranteRepeticion() = borrar(actualizarSugerencias = false)
+
+    /** Resincroniza sugerencias una única vez al soltar Backspace. */
+    fun finalizarBorradoRepetido() = refreshSuggestions()
 
     /** Selecciona una sugerencia: reemplaza la palabra en composición. */
     fun sugerir(palabra: String) {
@@ -450,10 +450,26 @@ class KeyboardController(
 
     /** Recalcula candidatos a partir de la palabra en composición actual. */
     private fun refreshSuggestions() {
-        suggestions = if (!enModoLola && suggestionsEnabled && profile.suggestionsAllowed) {
-            suggestionProvider.suggest(onCurrentWord(), "", 3)
-        } else {
-            emptyList()
+        suggestionJob?.cancel()
+        val generation = ++suggestionGen
+        if (enModoLola || !suggestionsEnabled || !profile.suggestionsAllowed) {
+            suggestions = emptyList()
+            return
+        }
+        val word = onCurrentWord()
+        if (word.isBlank()) {
+            suggestions = emptyList()
+            return
+        }
+        val context = onContextBefore()
+        suggestionJob = scope.launch {
+            // El autorepeat de borrar puede disparar decenas de eventos: esperar
+            // una pausa breve evita relanzar el corrector pesado por cada uno.
+            delay(SUGGESTION_DEBOUNCE_MS)
+            val result = withContext(Dispatchers.Default) {
+                suggestionProvider.suggest(word, context, 3)
+            }
+            if (generation == suggestionGen && word == onCurrentWord()) suggestions = result
         }
     }
 
@@ -599,6 +615,9 @@ class KeyboardController(
             clipboardItems = ClipboardRepository.load(prefs)
             cm?.removePrimaryClipChangedListener(clipListener)
             cm?.addPrimaryClipChangedListener(clipListener)
+            // Captura también lo copiado ANTES de abrir el teclado: el listener
+            // solo ve cambios futuros y era la causa de que WhatsApp no aparezca.
+            captureSystemClipboard(context)
         } else {
             cm?.removePrimaryClipChangedListener(clipListener)
             clipboardItems = emptyList()
@@ -642,7 +661,14 @@ class KeyboardController(
 
     // ── Mini portapapeles ──────────────────────────────────────────────────
 
-    fun toggleClipboard() = keyEngine.toggleClipboard()
+    fun toggleClipboard() {
+        keyEngine.toggleClipboard()
+        if (keyEngine.layer == KeyboardLayer.CLIPBOARD) {
+            // Acción explícita del usuario: refresca el clip actual incluso si
+            // se copió antes de que LOLA registrara su listener.
+            appContext?.let(::captureSystemClipboard)
+        }
+    }
 
     fun pasteClip(text: String) {
         onCommitText(text)
@@ -660,15 +686,40 @@ class KeyboardController(
         ClipboardRepository.save(prefs, emptyList())
     }
 
+    /** Lee el clip actual y lo incorpora al historial local, sin duplicados. */
+    private fun captureSystemClipboard(context: Context) {
+        if (!clipboardEnabled) return
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+        val text = try {
+            cm.primaryClip
+                ?.takeIf { it.itemCount > 0 }
+                ?.getItemAt(0)
+                ?.coerceToText(context)
+                ?.toString()
+        } catch (e: SecurityException) {
+            // Algunas versiones solo permiten leer en foreground. El IME no debe
+            // fallar si el sistema rechaza una lectura fuera de ese momento.
+            return
+        }
+        if (text.isNullOrBlank()) return
+        val prefs = LolaPrefs.get(context)
+        clipboardItems = ClipboardRepository.add(ClipboardRepository.load(prefs), text, System.currentTimeMillis())
+            .also { ClipboardRepository.save(prefs, it) }
+    }
+
     companion object {
-        /** Pisos de la ventana del IME en dp (se escalan con la pantalla). */
-        const val CHAT_HEIGHT_DP = 284
+        private const val SUGGESTION_DEBOUNCE_MS = 120L
+        /**
+         * Piso del teclado de chat: cinta compacta + cuatro filas cómodas.
+         * No se reserva una zona gris adicional; la ventana termina debajo de
+         * la fila inferior para dejar visible la conversación.
+         */
+        const val CHAT_HEIGHT_DP = 250
         const val LOLA_COMPACT_HEIGHT_DP = 480
 
-        /** Fracción del alto de pantalla: el teclado crece en pantallas grandes
-         *  (tablets) en vez de quedar clavado en un dp fijo. El piso es el dp de
-         *  cada modo; `ImeRootView` clampa al área real (nunca desborda). */
-        const val CHAT_SCREEN_FRACTION = 0.45f
+        /** Fracción del alto de pantalla: en chat se mantiene deliberadamente
+         *  compacta; LOLA puede crecer porque necesita mostrar el catálogo. */
+        const val CHAT_SCREEN_FRACTION = 0.30f
         const val LOLA_SCREEN_FRACTION = 0.55f
 
         /**

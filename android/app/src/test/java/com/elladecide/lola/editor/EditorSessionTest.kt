@@ -56,6 +56,28 @@ class EditorSessionTest {
     }
 
     @Test
+    fun `delete elimina el texto seleccionado`() {
+        val fake = FakeEditorConnection("hola mundo")
+        val s = session(fake)
+        fake.setSelection(0, fake.text.length)
+        s.onSelectionChanged(0, fake.text.length)
+        s.deleteBackwards()
+        assertEquals("", fake.text)
+        assertEquals(0, fake.cursorPos)
+    }
+
+    @Test
+    fun `deleteWord elimina el texto seleccionado`() {
+        val fake = FakeEditorConnection("hola mundo")
+        val s = session(fake)
+        fake.setSelection(5, 10)
+        s.onSelectionChanged(5, 10)
+        s.deleteWord()
+        assertEquals("hola ", fake.text)
+        assertEquals(5, fake.cursorPos)
+    }
+
+    @Test
     fun `delete dentro de composicion`() {
         val fake = FakeEditorConnection()
         val s = session(fake)

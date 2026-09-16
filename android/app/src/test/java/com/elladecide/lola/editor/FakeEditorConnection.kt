@@ -8,6 +8,8 @@ class FakeEditorConnection(initial: String = "") : EditorConnection {
 
     private val sb = StringBuilder(initial)
     private var cursor = initial.length
+    private var selectionStart = initial.length
+    private var selectionEnd = initial.length
     private var composingRange: IntRange? = null
 
     val text: String get() = sb.toString()
@@ -21,17 +23,23 @@ class FakeEditorConnection(initial: String = "") : EditorConnection {
 
     override fun commitText(text: String, newCursorPosition: Int): Boolean {
         removeComposing()
+        removeSelection()
         sb.insert(cursor, text)
         cursor += text.length
+        selectionStart = cursor
+        selectionEnd = cursor
         return true
     }
 
     override fun setComposingText(text: String, newCursorPosition: Int): Boolean {
         removeComposing()
+        removeSelection()
         if (text.isEmpty()) return true
         sb.insert(cursor, text)
         composingRange = cursor until (cursor + text.length)
         cursor += text.length
+        selectionStart = cursor
+        selectionEnd = cursor
         return true
     }
 
@@ -45,6 +53,8 @@ class FakeEditorConnection(initial: String = "") : EditorConnection {
         val end = (cursor + afterLength).coerceAtMost(sb.length)
         sb.delete(start, end)
         cursor = start
+        selectionStart = start
+        selectionEnd = start
         return true
     }
 
@@ -58,10 +68,13 @@ class FakeEditorConnection(initial: String = "") : EditorConnection {
         return sb.substring(cursor, end)
     }
 
-    override fun getSelectedText(flags: Int): CharSequence? = null
+    override fun getSelectedText(flags: Int): CharSequence? =
+        if (selectionStart == selectionEnd) null else sb.substring(selectionStart, selectionEnd)
 
     override fun setSelection(start: Int, end: Int): Boolean {
         cursor = end
+        selectionStart = start
+        selectionEnd = end
         return true
     }
 
@@ -75,6 +88,8 @@ class FakeEditorConnection(initial: String = "") : EditorConnection {
         removeComposing()
         sb.insert(cursor, "\n")
         cursor += 1
+        selectionStart = cursor
+        selectionEnd = cursor
         return true
     }
 
@@ -83,5 +98,15 @@ class FakeEditorConnection(initial: String = "") : EditorConnection {
         sb.delete(r.first, r.last + 1)
         cursor = r.first
         composingRange = null
+    }
+
+    private fun removeSelection() {
+        if (selectionStart == selectionEnd) return
+        val start = minOf(selectionStart, selectionEnd)
+        val end = maxOf(selectionStart, selectionEnd)
+        sb.delete(start, end)
+        cursor = start
+        selectionStart = start
+        selectionEnd = start
     }
 }

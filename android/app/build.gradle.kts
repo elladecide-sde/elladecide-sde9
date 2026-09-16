@@ -79,6 +79,7 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.tensorflow.lite)
 
     testImplementation(libs.junit)
     // org.json real para los unit tests: en la JVM (sin emulador) el stub de

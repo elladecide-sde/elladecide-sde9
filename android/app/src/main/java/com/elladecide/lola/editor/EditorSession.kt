@@ -164,6 +164,20 @@ class EditorSession {
     /** Palabra actual en composición (vacía si no hay composición activa). */
     fun currentWord(): String = composing
 
+    /**
+     * Texto committeado previo a la palabra actual, usado como contexto local
+     * del re-ranker. Se limita la lectura para no retener ni procesar el
+     * contenido completo del campo anfitrión.
+     */
+    fun contextBeforeCurrentWord(maxChars: Int = CONTEXT_LOOKBACK): String {
+        val before = connectionProvider()?.getTextBeforeCursor(maxChars, 0)?.toString().orEmpty()
+        return if (composing.isNotEmpty() && before.endsWith(composing)) {
+            before.dropLast(composing.length)
+        } else {
+            before
+        }
+    }
+
     fun setComposingText(text: String) {
         if (text.isEmpty()) {
             finishComposing()
@@ -233,6 +247,17 @@ class EditorSession {
      */
     fun deleteBackwards() {
         val conn = connectionProvider() ?: return
+        // InputConnection.commitText reemplaza la selección activa. Sin esta
+        // rama, deleteSurroundingText solo miraba atrás del cursor y WhatsApp
+        // dejaba intacto el texto seleccionado.
+        if (selectionStart != selectionEnd) {
+            val start = minOf(selectionStart, selectionEnd)
+            conn.commitText("", 1)
+            selectionStart = start
+            selectionEnd = start
+            undoableText = null
+            return
+        }
         if (isComposing) {
             if (composingCursor > 0) {
                 val head = composing.substring(0, composingCursor)
@@ -263,6 +288,14 @@ class EditorSession {
      */
     fun deleteWord() {
         val conn = connectionProvider() ?: return
+        if (selectionStart != selectionEnd) {
+            val start = minOf(selectionStart, selectionEnd)
+            conn.commitText("", 1)
+            selectionStart = start
+            selectionEnd = start
+            undoableText = null
+            return
+        }
         if (isComposing) {
             conn.setComposingText("", 1)
             conn.finishComposingText()
@@ -374,5 +407,9 @@ class EditorSession {
         selectionStart = (selectionStart - text.length).coerceAtLeast(0)
         selectionEnd = selectionStart
         undoableText = null
+    }
+
+    private companion object {
+        const val CONTEXT_LOOKBACK = 256
     }
 }

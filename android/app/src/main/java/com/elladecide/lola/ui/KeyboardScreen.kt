@@ -206,17 +206,7 @@ private fun ContenidoTeclado(
             .fillMaxHeight()
             .padding(metrics.screenPaddingDp.dp),
     ) {
-        // En CHAT con teclas (no panel), el contenido es de alto fijo: el Spacer
-        // con peso lo ancla al borde inferior, dejando el sobrante ARRIBA (como
-        // Gboard). En LOLA el panel ya consume el sobrante; en EMOJI/CLIPBOARD el
-        // panel con weight(1f) llena — meter el spacer ahí los achicaría.
-        if (!controller.enModoLola && controller.capa != KeyboardLayer.EMOJI &&
-            controller.capa != KeyboardLayer.CLIPBOARD
-        ) {
-            Spacer(Modifier.weight(1f))
-        }
-
-        // Cinta superior con geometría estable: en CHAT muestra herramientas o
+        // Cinta superior compacta: en CHAT muestra herramientas o
         // sugerencias (una u otra, sin desplazar el teclado); en LOLA la cinta
         // propia (Modo Chat + Expandir).
         if (controller.enModoLola) {
@@ -279,27 +269,31 @@ private fun ContenidoTeclado(
  *  fila inferior (spec §7-§10). */
 @Composable
 private fun ToolbarChat(controller: KeyboardController, metrics: KeyboardMetrics) {
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(metrics.stripHeightDp.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        ToolbarButton("◀▶", "Teclado de cursor", controller.capa == KeyboardLayer.CURSOR) {
-            controller.press(Key.CURSOR)
-        }
-        Spacer(Modifier.weight(1f))
+        ToolbarButton(
+            text = "◀▶",
+            desc = "Teclado de cursor",
+            active = controller.capa == KeyboardLayer.CURSOR,
+            modifier = Modifier.align(Alignment.CenterStart),
+        ) { controller.press(Key.CURSOR) }
         if (controller.clipboardEnabled) {
             ToolbarButton(
-                "📋",
-                "Mini portapapeles",
-                controller.capa == KeyboardLayer.CLIPBOARD,
+                text = "📋",
+                desc = "Mini portapapeles",
+                active = controller.capa == KeyboardLayer.CLIPBOARD,
+                modifier = Modifier.align(Alignment.Center),
             ) { controller.toggleClipboard() }
         }
-        ToolbarButton("LOLA", "Modo LOLA", controller.enModoLola) {
-            controller.press(Key.LOLA)
-        }
+        ToolbarButton(
+            text = "LOLA",
+            desc = "Modo LOLA",
+            active = controller.enModoLola,
+            modifier = Modifier.align(Alignment.CenterEnd),
+        ) { controller.press(Key.LOLA) }
     }
 }
 
@@ -324,9 +318,15 @@ private fun ToolbarLola(controller: KeyboardController, metrics: KeyboardMetrics
 }
 
 @Composable
-private fun ToolbarButton(text: String, desc: String, active: Boolean, onClick: () -> Unit) {
+private fun ToolbarButton(
+    text: String,
+    desc: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .background(if (active) LolaActive else LolaSurface)
             .clickable(onClick = onClick)
@@ -335,14 +335,14 @@ private fun ToolbarButton(text: String, desc: String, active: Boolean, onClick: 
                 role = Role.Button
                 onClick(label = desc) { onClick(); true }
             }
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = 10.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text,
             color = if (active) Color.White else LolaText,
             fontWeight = FontWeight.Bold,
-            fontSize = 13.sp,
+            fontSize = 12.sp,
             maxLines = 1,
         )
     }
@@ -403,7 +403,8 @@ private fun FilasTeclado(
                         acento = tecla.type != KeyType.CHAR,
                         activo = controller.esActiva(tecla),
                         alternativas = controller.alternativas(tecla),
-                        repetir = if (tecla.type == KeyType.BACKSPACE) ({ controller.borrar() }) else null,
+                        repetir = if (tecla.type == KeyType.BACKSPACE) controller::borrarDuranteRepeticion else null,
+                        onRepeatFinished = if (tecla.type == KeyType.BACKSPACE) controller::finalizarBorradoRepetido else null,
                         onLongPress = if (tecla.type == KeyType.SHIFT) ({ controller.fijarShift() }) else null,
                         onDoubleTap = if (tecla.type == KeyType.SHIFT) ({ controller.fijarShift() }) else null,
                         onSwipeLeft = if (tecla.type == KeyType.BACKSPACE) ({ controller.borrarPalabra() }) else null,
@@ -985,6 +986,7 @@ private fun Tecla(
     viewportH: Float = 0f,
     popupController: PopupController? = null,
     onComprometerAlternativa: (String) -> Unit = {},
+    onRepeatFinished: (() -> Unit)? = null,
 ) {
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
@@ -1001,6 +1003,7 @@ private fun Tecla(
     val glideActual by rememberUpdatedState(onGlide)
     val tapActual by rememberUpdatedState(onTap)
     val comprometerActual by rememberUpdatedState(onComprometerAlternativa)
+    val repeatFinishedActual by rememberUpdatedState(onRepeatFinished)
     val viewportWActual by rememberUpdatedState(viewportW)
     val viewportHActual by rememberUpdatedState(viewportH)
 
@@ -1105,6 +1108,7 @@ private fun Tecla(
                                     }
                                 }
                             }
+                            repeatFinishedActual?.invoke()
                             return@awaitEachGesture
                         }
 

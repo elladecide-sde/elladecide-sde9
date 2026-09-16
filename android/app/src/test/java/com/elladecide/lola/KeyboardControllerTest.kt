@@ -21,19 +21,23 @@ class KeyboardControllerTest {
 
     private fun controller(
         onSyncEditor: () -> Unit = {},
+        onDelete: () -> Unit = {},
+        onCurrentWord: () -> String = { "" },
+        onContextBefore: () -> String = { "" },
     ): KeyboardController = KeyboardController(
         scope = CoroutineScope(Dispatchers.Unconfined),
         onCommitText = {},
         onCommitImage = {},
         onCommitImageFile = {},
-        onDelete = {},
+        onDelete = onDelete,
         onEnter = {},
         onMoveCursor = {},
         onCambiarAltura = {},
         onTypeText = {},
         onReplaceComposing = {},
         onUndo = {},
-        onCurrentWord = { "" },
+        onCurrentWord = onCurrentWord,
+        onContextBefore = onContextBefore,
         onDeleteWord = {},
         onSyncEditor = onSyncEditor,
         suggestionProvider = PrefixSuggestionProvider(PlaceholderWords.LIST),
@@ -78,6 +82,24 @@ class KeyboardControllerTest {
         assertEquals(KeyboardController.EXPANDED_FILL_DP, c.alturaDp())
         c.toggleExpandir()
         assertEquals(KeyboardController.LOLA_COMPACT_HEIGHT_DP, c.alturaDp())
+    }
+
+    @Test
+    fun `autorepeat borra sin releer contexto hasta soltar`() {
+        var borrados = 0
+        var lecturasDeContexto = 0
+        val c = controller(
+            onDelete = { borrados++ },
+            onCurrentWord = { "hola" },
+            onContextBefore = { lecturasDeContexto++; "" },
+        )
+
+        repeat(8) { c.borrarDuranteRepeticion() }
+        assertEquals(8, borrados)
+        assertEquals(0, lecturasDeContexto)
+
+        c.finalizarBorradoRepetido()
+        assertEquals(1, lecturasDeContexto)
     }
 
     @Test

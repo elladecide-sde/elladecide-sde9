@@ -43,6 +43,7 @@ class KeyboardInstrumentationTest {
             onUndo = {},
             onCurrentWord = { "" },
             onDeleteWord = {},
+            onSyncEditor = {},
             suggestionProvider = com.elladecide.lola.language.PrefixSuggestionProvider(
                 com.elladecide.lola.language.PlaceholderWords.LIST,
             ),

@@ -1,5 +1,6 @@
 package com.elladecide.lola
 
+import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
@@ -28,8 +29,7 @@ import com.elladecide.lola.data.LolaDatabase
 import com.elladecide.lola.editor.AndroidEditorConnection
 import com.elladecide.lola.editor.EditorInfoClassifier
 import com.elladecide.lola.editor.EditorSession
-import com.elladecide.lola.language.PlaceholderWords
-import com.elladecide.lola.language.PrefixSuggestionProvider
+import com.elladecide.lola.language.NeuralSuggestionProvider
 import com.elladecide.lola.ui.KeyboardScreen
 import java.io.File
 
@@ -50,6 +50,7 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
 
     private lateinit var database: LolaDatabase
     private lateinit var controller: KeyboardController
+    private lateinit var neuralSuggestionProvider: NeuralSuggestionProvider
     private lateinit var rootView: ImeRootView
     private val session = EditorSession()
 
@@ -58,6 +59,7 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
         savedStateRegistryController.performRestore(null)
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
         database = LolaDatabase.build(this)
+        neuralSuggestionProvider = NeuralSuggestionProvider(applicationContext)
         controller = KeyboardController(
             lifecycleScope,
             onCommitText = { session.commitText(it) },
@@ -71,9 +73,10 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
             onReplaceComposing = { session.replaceComposingText(it) },
             onUndo = { session.undo() },
             onCurrentWord = { session.currentWord() },
+            onContextBefore = { session.contextBeforeCurrentWord() },
             onDeleteWord = { session.deleteWord() },
             onSyncEditor = { session.syncEditor() },
-            suggestionProvider = PrefixSuggestionProvider(PlaceholderWords.LIST),
+            suggestionProvider = neuralSuggestionProvider,
         )
         controller.suggestionsEnabled = LolaPrefs.get(this)
             .getBoolean(LolaPrefs.KEY_SUGGESTIONS_ENABLED, true)
@@ -185,6 +188,9 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
 
     override fun onEvaluateFullscreenMode(): Boolean = false
 
+    // La decisión de privacidad reemplaza deliberadamente la política base:
+    // un campo password nunca debe mostrar este IME aunque el sistema diga sí.
+    @SuppressLint("MissingSuperCall")
     override fun onEvaluateInputViewShown(): Boolean {
         val info = currentInputEditorInfo ?: return true
         return !EditorInfoClassifier.classify(info.inputType, info.imeOptions).isPassword
@@ -193,6 +199,7 @@ class LolaImeService : InputMethodService(), LifecycleOwner, SavedStateRegistryO
     override fun onDestroy() {
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         controller.cerrarPortapapeles()
+        if (::neuralSuggestionProvider.isInitialized) neuralSuggestionProvider.close()
         super.onDestroy()
     }
 

@@ -7,9 +7,9 @@ import org.junit.Test
 class KeyboardMetricsTest {
 
     @Test
-    fun `tecla de 46dp en 250dp`() {
+    fun `tecla de 49dp en 250dp con cinta compacta`() {
         val m = KeyboardMetrics.compute(250f, 1f)
-        assertEquals(46.25f, m.keyHeightDp, 0.01f)
+        assertEquals(49.25f, m.keyHeightDp, 0.01f)
     }
 
     @Test
@@ -52,8 +52,10 @@ class KeyboardMetricsTest {
 
     @Test
     fun `la cinta y el panel escalan con la fuente`() {
-        val normal = KeyboardMetrics.compute(300f, 1f)
-        val grande = KeyboardMetrics.compute(300f, 1.3f)
+        // A 300dp ambas alturas llegan al tope de 56dp; 240dp permite
+        // verificar que la cinta escalada sí reduce el presupuesto de tecla.
+        val normal = KeyboardMetrics.compute(240f, 1f)
+        val grande = KeyboardMetrics.compute(240f, 1.3f)
         assertTrue(grande.stripHeightDp > normal.stripHeightDp)
         assertTrue(grande.panelMinDp > normal.panelMinDp)
         assertTrue(grande.keyHeightDp < normal.keyHeightDp) // más overhead → tecla más chica
@@ -87,10 +89,10 @@ class KeyboardMetricsTest {
     @Test
     fun `el panel LOLA nunca desborda sobre la barra ENVIAR y nunca deja espacio negativo`() {
         val maxFs = KeyboardMetrics.MAX_FONT_SCALE
-        assertEquals(255f, KeyboardMetrics.lolaPanelHeightDp(480f, 1f), 0.01f)
-        assertEquals(543f, KeyboardMetrics.lolaPanelHeightDp(800f, 1f), 0.01f)
+        assertEquals(256f, KeyboardMetrics.lolaPanelHeightDp(480f, 1f), 0.01f)
+        assertEquals(555f, KeyboardMetrics.lolaPanelHeightDp(800f, 1f), 0.01f)
         assertEquals(285f, KeyboardMetrics.lolaPanelHeightDp(480f, maxFs), 0.01f)
-        assertEquals(497f, KeyboardMetrics.lolaPanelHeightDp(800f, maxFs), 0.01f)
+        assertEquals(515f, KeyboardMetrics.lolaPanelHeightDp(800f, maxFs), 0.01f)
 
         // Invariantes: nunca espacio negativo para el teclado, y el panel nunca
         // baja de sus controles fijos (PANEL_CONTROLS_MIN_DP) cuando la ventana
