@@ -11,15 +11,20 @@ Sync **offline-first** del catálogo de LOLA, por **HASH + catálogo completo**.
 
 ```
 backend/
-├── schema.sql          ← tablas: metadata, products, products_bak, products_bak2, auth, categorias
+├── schema.sql              ← tablas: metadata, products, products_bak, products_bak2, auth, categorias
 ├── src/
-│   ├── index.ts        ← Worker: rutas version/sync/admin (+ rollback)
-│   ├── hash.ts         ← hash canónico SHA-256 del catálogo
-│   ├── codigoUnico.ts  ← regla de codigo_unico (paridad exacta con pages/codigoUnico.js)
-│   └── importCatalogo.ts ← núcleo compartido: parseo + precios + códigos
-├── scripts/import-catalogo.ts  ← CLI (dry-run + subida + mapa para sde11)
-├── scripts/bump.sql    ← bump manual de revisión (fallback)
-├── wrangler.jsonc      ← config del Worker + binding D1
+│   ├── index.ts            ← Worker: rutas version/sync/admin (+ rollback)
+│   ├── hash.ts             ← hash canónico SHA-256 del catálogo
+│   ├── hash.test.ts        ← golden tests del hash (paridad Android)
+│   ├── codigoUnico.ts      ← regla de codigo_unico (paridad exacta con pages/codigoUnico.js)
+│   ├── codigoUnico.test.ts ← tests del generador de códigos
+│   ├── importCatalogo.ts   ← núcleo compartido: parseo + precios + códigos
+│   └── auth.ts             ← JWT, PBKDF2, comparación segura
+├── scripts/
+│   ├── import-catalogo.ts  ← CLI (dry-run + subida + mapa para sde11)
+│   ├── migrate.sql         ← migraciones idempotentes (backups + seed)
+│   └── bump.sql            ← bump manual de revisión (fallback)
+├── wrangler.jsonc          ← config del Worker + binding D1
 └── package.json
 ```
 
@@ -35,7 +40,7 @@ determinística por el import, derivada de la marca + el código de artículo:
 
 - **Estable** (no depende de un contador ni del orden del Excel).
 - Productos sin modelo (los "LIQ.") usan la descripción para desambiguar.
-- Colisiones → se agregan palabras posteriores al modelo, se crecen las
+- Colisiones → se agregan palabras posteriores al modelo, se creen las
   abreviaciones y, de último, un sufijo hash (ver `src/codigoUnico.ts`).
 - `pages/codigoUnico.js` es port 1:1 (verificado en paridad exacta). **La página
   genera y el worker solo reemplaza.**
@@ -47,9 +52,9 @@ determinística por el import, derivada de la marca + el código de artículo:
 ## Sync (por HASH, catálogo completo)
 
 ```
-1. GET /version → { revision, hash }
+1. GET /api/v1/version → { revision, hash }
 2. hash_local == hash → FIN (0 requests más)
-3. hash distinto → GET /sync → catálogo COMPLETO → el cliente reemplaza su base local
+3. hash distinto → GET /api/v1/sync → catálogo COMPLETO → el cliente reemplaza su base local
 ```
 
 No hay tombstones ni revisión por artículo: el reemplazo es el modelo. Cuando los
@@ -100,13 +105,19 @@ npx wrangler login
 # 1) Crear la base D1 y copiar el database_id al wrangler.jsonc
 npx wrangler d1 create lola-db
 
-# 2) Crear las tablas
+# 2) Crear las tablas (schema.sql crea TODO incluyendo backups + seed)
 npm run db:init:local     # dev (SQLite local)
 npm run db:init           # producción
-#    ¿Ya inicializaste con el esquema viejo? Corré la migración UNA vez:
-npm run db:migrate        # npx wrangler d1 execute lola-db --file ./scripts/migrate.sql
 
-# 3) Secrets de admin (JWT)
+# 3) Migración idempotente (backups + seed, seguro correr múltiples veces)
+npm run db:migrate:local  # dev
+npm run db:migrate        # producción
+
+# 4) Si la base es VIEJA (sin columna backup_state), correr UNA VEZ:
+npx wrangler d1 execute lola-db --remote --command \
+  "ALTER TABLE metadata ADD COLUMN backup_state TEXT NOT NULL DEFAULT '{\"newest\":\"bak2\"}'"
+
+# 5) Secrets de admin (JWT)
 #    Local: creá backend/.dev.vars con
 #      ADMIN_USER=admin
 #      ADMIN_PASSWORD=devpass
@@ -126,34 +137,311 @@ npm run deploy   # producción
 
 ## Contrato de API
 
-### Público
+Todas las respuestas son `Content-Type: application/json; charset=utf-8` con
+`Cache-Control: no-store`. El Worker envía CORS headers en TODAS las respuestas:
 
-| Método | Ruta | Respuesta |
-| --- | --- | --- |
-| GET | `/api/v1/version` | `{ revision, hash }` |
-| GET | `/api/v1/sync` | `{ revision, hash, products: [catálogo completo] }` |
-| GET | `/api/v1/mapa-catalogo` | `{ revision, hash, productos: [{ codigo_unico, nombre, modelo }] }` |
+```
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS
+Access-Control-Allow-Headers: Content-Type, Authorization
+```
 
-`products[]` = `{ codigo_unico, nombre, precios: [L1, L2, L3, L4] }`.
+### GET /api/v1/version
 
-### Admin (autenticación JWT)
+Devuelve la revisión y el hash actual. Los clientes lo usan para decidir si
+necesitan sincronizar.
 
-1. `POST /api/v1/auth/login { username, password }` → `{ token, expires_in }` (24h).
-2. `Authorization: Bearer <token>` en cada request admin.
+**Headers:** ninguno especial.
 
-| Método | Ruta | Body | Efecto |
-| --- | --- | --- | --- |
-| POST | `/api/v1/auth/login` | `{ username, password }` | token JWT |
-| POST | `/api/v1/auth/change-password` | `{ current_password, new_password }` | re-hashea la contraseña |
-| POST | `/api/v1/admin/products` | `{ products: [...], replace?: true }` | upsert parcial o reemplazo + backup |
-| POST | `/api/v1/admin/import` | `{ filas: [[...]], ... }` | fallback: el worker calcula (importCatalogo) + reemplazo |
-| POST | `/api/v1/admin/rollback` | `{ backup: 'bak' \| 'bak2' }` | restaura una versión anterior |
-| DELETE | `/api/v1/admin/products/:codigo_unico` | — | borra + bump + hash |
-| POST | `/api/v1/admin/rehash` | — | recalcula hash (tras tocar D1 a mano) |
+```bash
+curl http://localhost:8787/api/v1/version
+```
 
-**Seguridad:** administración **fail-closed**. Sin `JWT_SECRET`, NADIE administra.
-La contraseña se verifica contra `auth.password_hash` (PBKDF2 + salt) si ya se
-cambió; si no, contra el secret `ADMIN_PASSWORD`.
+```json
+{ "revision": 42, "hash": "a1b2c3d4..." }
+```
+
+### GET /api/v1/sync
+
+Catálogo completo. El cliente reemplaza toda su base local con la respuesta.
+
+**Headers:** ninguno especial.
+
+```bash
+curl http://localhost:8787/api/v1/sync
+```
+
+```json
+{
+  "revision": 42,
+  "hash": "a1b2c3d4...",
+  "products": [
+    {
+      "codigo_unico": "BAK2000",
+      "nombre": "BAKHOU 2000 LISO ALGODON HOMBRE",
+      "precios": [1200, 1100, 1000, 900]
+    }
+  ]
+}
+```
+
+`precios` = `[L1, L2, L3, L4]` (Lista 1 a 4, enteros redondeados).
+
+### GET /api/v1/mapa-catalogo
+
+Mapa simplificado para el editor de fotos (sde11). No incluye precios.
+
+**Headers:** ninguno especial.
+
+```bash
+curl http://localhost:8787/api/v1/mapa-catalogo
+```
+
+```json
+{
+  "revision": 42,
+  "hash": "a1b2c3d4...",
+  "productos": [
+    {
+      "codigo_unico": "BAK2000",
+      "nombre": "BAKHOU 2000 LISO ALGODON HOMBRE",
+      "modelo": "2000"
+    }
+  ]
+}
+```
+
+### POST /api/v1/auth/login
+
+Autenticación. Devuelve un JWT válido por 24 horas.
+
+**Headers requeridos:**
+```
+Content-Type: application/json
+```
+
+```bash
+curl -X POST http://localhost:8787/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "devpass"}'
+```
+
+```json
+{ "token": "eyJhbGci...", "expires_in": 86400 }
+```
+
+Errores:
+- `401` → credenciales inválidas
+- `503` → `JWT_SECRET` no configurado en el Worker
+
+### POST /api/v1/auth/change-password
+
+Cambia la contraseña del admin. Hashea con PBKDF2 + salt.
+
+**Headers requeridos:**
+```
+Content-Type: application/json
+Authorization: Bearer <token>
+```
+
+```bash
+curl -X POST http://localhost:8787/api/v1/auth/change-password \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGci..." \
+  -d '{"current_password": "devpass", "new_password": "nuevapass123"}'
+```
+
+```json
+{ "ok": true }
+```
+
+Errores:
+- `400` → nueva contraseña menor a 8 caracteres
+- `401` → contraseña actual incorrecta o token inválido
+
+### POST /api/v1/admin/products
+
+Upsert parcial o reemplazo completo del catálogo.
+
+**Headers requeridos:**
+```
+Content-Type: application/json
+Authorization: Bearer <token>
+```
+
+**Body** (acepta 3 formatos):
+```json
+// Formato 1: array directo
+[{ "codigo_unico": "BAK2000", "nombre": "...", "precios": [1,2,3,4] }]
+
+// Formato 2: objeto con wrapper
+{ "products": [{ "codigo_unico": "BAK2000", "nombre": "...", "precios": [1,2,3,4] }] }
+
+// Formato 3: reemplazo completo
+{ "products": [...], "replace": true }
+```
+
+**Upsert parcial** (default): actualiza o inserta los productos enviados sin tocar el resto.
+
+```bash
+curl -X POST http://localhost:8787/api/v1/admin/products \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGci..." \
+  -d '{"products": [{"codigo_unico": "BAK2000", "nombre": "BAKHOU 2000", "precios": [1200,1100,1000,900]}]}'
+```
+
+```json
+{ "revision": 43, "hash": "e5f6g7h8..." }
+```
+
+**Reemplazo** (`replace: true`): borra todo el catálogo y reemplaza. Antes de borrar,
+copia al backup rotativo. Atómico (un solo batch).
+
+```bash
+curl -X POST http://localhost:8787/api/v1/admin/products \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGci..." \
+  -d '{"products": [...], "replace": true}'
+```
+
+```json
+{ "revision": 43, "hash": "e5f6g7h8...", "backup": "bak" }
+```
+
+### POST /api/v1/admin/import
+
+Importa desde filas de Excel (el worker calcula `codigo_unico` y precios).
+Funciona igual que el CLI pero remoto.
+
+**Headers requeridos:**
+```
+Content-Type: application/json
+Authorization: Bearer <token>
+```
+
+**Body:**
+```json
+{
+  "filas": [["BAKHOU 2000 LISO ALGODON HOMBRE", 1500], ...],
+  "colNombre": 0,
+  "colPrecio": 1,
+  "skip": 0,
+  "marcas": ["BAKHOU", "LAundry"]
+}
+```
+
+| Campo | Tipo | Requerido | Descripción |
+|-------|------|-----------|-------------|
+| `filas` | `array[][]` | ✅ | Filas del Excel como arrays de celdas |
+| `colNombre` | `number` | ❌ | Índice de columna del nombre (default: auto-detectar) |
+| `colPrecio` | `number` | ❌ | Índice de columna del precio (default: auto-detectar) |
+| `colCodigo` | `number` | ❌ | Índice de columna del código (default: none) |
+| `skip` | `number` | ❌ | Filas a saltar al inicio (default: 0) |
+| `marcas` | `string[]` | ❌ | Lista de marcas para limpiar códigos |
+
+```bash
+curl -X POST http://localhost:8787/api/v1/admin/import \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGci..." \
+  -d '{"filas": [["BAKHOU 2000", 1500], ["LAundry 500", 800]]}'
+```
+
+```json
+{
+  "revision": 43,
+  "hash": "e5f6g7h8...",
+  "productos": 2,
+  "colisiones": 0,
+  "descartados": 0,
+  "rechazadas": 0
+}
+```
+
+### POST /api/v1/admin/rollback
+
+Restaura una versión anterior del catálogo (backup).
+
+**Headers requeridos:**
+```
+Content-Type: application/json
+Authorization: Bearer <token>
+```
+
+**Body:**
+```json
+{ "backup": "bak" }
+```
+
+`backup` debe ser `"bak"` o `"bak2"`.
+
+```bash
+curl -X POST http://localhost:8787/api/v1/admin/rollback \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGci..." \
+  -d '{"backup": "bak"}'
+```
+
+```json
+{ "revision": 44, "hash": "i9j0k1l2...", "restaurado": "bak" }
+```
+
+### DELETE /api/v1/admin/products/:codigo_unico
+
+Borra un producto por su `codigo_unico`.
+
+**Headers requeridos:**
+```
+Authorization: Bearer <token>
+```
+
+```bash
+curl -X DELETE http://localhost:8787/api/v1/admin/products/BAK2000 \
+  -H "Authorization: Bearer eyJhbGci..."
+```
+
+```json
+{ "revision": 43, "hash": "e5f6g7h8..." }
+```
+
+### POST /api/v1/admin/rehash
+
+Recalcula el hash del catálogo. Usar después de tocar D1 a mano.
+
+**Headers requeridos:**
+```
+Authorization: Bearer <token>
+```
+
+```bash
+curl -X POST http://localhost:8787/api/v1/admin/rehash \
+  -H "Authorization: Bearer eyJhbGci..."
+```
+
+```json
+{ "hash": "e5f6g7h8..." }
+```
+
+## Seguridad
+
+- **Autenticación fail-closed:** sin `JWT_SECRET`, NADIE administra.
+- **Contraseña hasheada:** PBKDF2-HMAC-SHA256 + salt, almacenada en `auth`.
+  Si `auth` está vacía, usa el secret `ADMIN_PASSWORD` como fallback.
+- **JWT:** 24 horas de TTL. Firma y verificación con `JWT_SECRET`.
+- **CORS:** `*` (abierto). El backend es público para el sync; la admin
+  requiere token.
+- **Rate limiting:** no implementado (Cloudflare lo maneja en el edge).
+
+## Tablas D1
+
+| Tabla | Propósito |
+|-------|-----------|
+| `metadata` | Singleton: `revision_number`, `catalog_hash`, `backup_state` |
+| `products` | Catálogo activo (PK: `codigo_unico`) |
+| `products_bak` | Backup rotativo 1 |
+| `products_bak2` | Backup rotativo 2 |
+| `auth` | Credenciales admin (hash PBKDF2 + salt) |
+| `categorias` | Taxonomía (reservada, pendiente de poblar) |
+| `producto_categoria` | Relación producto → categoría |
 
 ## Hash canónico
 
@@ -167,7 +455,24 @@ un port exacto (`CatalogHash.kt`, golden tests en `hash.test.ts`).
 
 - **Camino normal:** endpoints admin (POST/DELETE/import/rollback): `revision +1`
   + hash recalculado en el MISMO batch.
-- **Manual:** `scripts/bump.sql` sube el contador; después `/api/v1/admin/rehash`.
+- **Manual:** `scripts/bump.sql` sube el contador; después `POST /api/v1/admin/rehash`.
+
+## CI/CD
+
+El workflow `.github/workflows/backend.yml` se ejecuta al pushear a `main`
+con cambios en `backend/`:
+
+1. `schema.sql` → estructura completa (idempotente)
+2. `migrate.sql` → backups + seed (idempotente)
+3. `ALTER TABLE` → agrega `backup_state` si falta (base vieja, tolera error)
+4. `wrangler deploy` → deploy del Worker
+
+Secrets de GitHub requeridos:
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+- `ADMIN_USER` (opcional)
+- `ADMIN_PASSWORD` (opcional)
+- `JWT_SECRET` (opcional)
 
 ## Pendiente
 
