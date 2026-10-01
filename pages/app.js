@@ -10,6 +10,8 @@
 
 const API_BASE = 'https://lola-backend.elladecide.workers.dev';
 
+const $ = (id) => document.getElementById(id);
+
 // CONFIG — idéntico a CONFIG_DEFAULTS de la extensión / configuracion.txt.
 const CONFIG = {
   iva: 21,
@@ -195,7 +197,6 @@ async function changePassword(currentPassword, newPassword) {
 }
 
 // ── UI ──────────────────────────────────────────────────────────────────────
-const $ = (id) => document.getElementById(id);
 let productosGenerados = null;
 
 function setStatus(msg, ok) {
