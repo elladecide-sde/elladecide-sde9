@@ -56,7 +56,7 @@ jobs:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
         run: |
+          npx wrangler deploy
           if [ -n "$ADMIN_USER" ]; then echo "$ADMIN_USER" | npx wrangler secret put ADMIN_USER; fi
           if [ -n "$ADMIN_PASSWORD" ]; then echo "$ADMIN_PASSWORD" | npx wrangler secret put ADMIN_PASSWORD; fi
           if [ -n "$JWT_SECRET" ]; then echo "$JWT_SECRET" | npx wrangler secret put JWT_SECRET; fi
-          npx wrangler deploy
