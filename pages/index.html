@@ -10,47 +10,76 @@
   <main class="card">
     <header class="head">
       <div class="logo">🐱</div>
-      <div>
+      <div class="head-text">
         <h1>LOLA · Catálogo</h1>
-        <p class="sub">Subí el Excel de precios (Lista 4) → 4 listas calculadas → nube.</p>
+        <p class="sub">Inventario, precios y sync del catálogo en un solo lugar.</p>
+      </div>
+      <div class="head-actions" id="sessionBlock" hidden>
+        <span class="pill ok">✅ Sesión activa</span>
+        <button id="logoutBtn" class="btn ghost" type="button">Salir</button>
       </div>
     </header>
 
     <!-- Login -->
-    <section class="block" id="loginBlock">
-      <h2 class="block-title">Ingresá</h2>
-      <label class="field">
-        <span>Usuario</span>
-        <input type="text" id="username" autocomplete="username" placeholder="tu usuario">
-      </label>
-      <label class="field">
-        <span>Contraseña</span>
-        <input type="password" id="password" autocomplete="current-password" placeholder="••••••••">
-      </label>
-      <button id="loginBtn" class="btn primary full">🔐 Ingresar</button>
-      <span id="loginStatus" class="status"></span>
+    <section class="view" id="view-login">
+      <div class="login-wrap">
+        <h2 class="block-title">Ingresá</h2>
+        <label class="field">
+          <span>Usuario</span>
+          <input type="text" id="username" autocomplete="username" placeholder="tu usuario">
+        </label>
+        <label class="field">
+          <span>Contraseña</span>
+          <input type="password" id="password" autocomplete="current-password" placeholder="••••••••">
+        </label>
+        <button id="loginBtn" class="btn primary full" type="button">🔐 Ingresar</button>
+        <span id="loginStatus" class="status"></span>
+      </div>
     </section>
 
-    <!-- Sesión activa -->
-    <section class="block" id="sessionBlock" hidden>
-      <div class="session">
-        <span class="pill ok">✅ Sesión activa</span>
-        <button id="changePwdBtn" class="btn ghost">🔑 Contraseña</button>
-        <button id="logoutBtn" class="btn ghost">Salir</button>
-      </div>
-      <div id="changePwdBlock" class="change-pwd" hidden>
-        <label class="field"><span>Contraseña actual</span><input type="password" id="currentPwd" autocomplete="current-password"></label>
-        <div class="grid2">
-          <label class="field"><span>Nueva contraseña</span><input type="password" id="newPwd" autocomplete="new-password"></label>
-          <label class="field"><span>Repetir</span><input type="password" id="newPwd2" autocomplete="new-password"></label>
+    <!-- Navegación por secciones -->
+    <nav class="tabs" id="tabs" hidden>
+      <button class="tab active" data-vista="inventario" type="button">📦 Inventario</button>
+      <button class="tab" data-vista="catalogo" type="button">📂 Catálogo</button>
+      <button class="tab" data-vista="config" type="button">⚙️ Configuración</button>
+      <button class="tab" data-vista="admin" type="button">🗂️ Administración</button>
+    </nav>
+
+    <!-- ══ INVENTARIO ══════════════════════════════════════════════════════ -->
+    <section class="view" id="view-inventario" hidden>
+      <div class="inv-head">
+        <div>
+          <h2 class="block-title">📦 Inventario</h2>
+          <p class="muted" id="invMeta">Cargando…</p>
         </div>
-        <button id="savePwdBtn" class="btn primary">Guardar</button>
-        <span id="changePwdStatus" class="status"></span>
+        <button id="invRecargar" class="btn ghost" type="button">↺ Recargar</button>
       </div>
+
+      <div class="search">
+        <span class="search-ico">🔍</span>
+        <input type="search" id="invSearch" autocomplete="off" spellcheck="false"
+               placeholder="Buscar por descripción, código, categoría o fábrica…">
+      </div>
+
+      <div class="inv-legend muted">
+        <span id="invCount"></span>
+        <span class="inv-legend-right">✏️ editar · 🗑️ eliminar</span>
+      </div>
+
+      <div class="inv-list" id="invList"></div>
+
+      <div class="actions" id="invMore" hidden>
+        <button id="invMoreBtn" class="btn secondary" type="button">Ver más resultados</button>
+      </div>
+
+      <span id="invStatus" class="status"></span>
     </section>
 
-    <!-- Subida -->
-    <div id="uploadArea" hidden>
+    <!-- ══ CATÁLOGO ════════════════════════════════════════════════════════ -->
+    <section class="view" id="view-catalogo" hidden>
+      <h2 class="block-title">📂 Catálogo</h2>
+      <p class="muted inv-sub">Subí el Excel de precios (Lista 4) → 4 listas calculadas → nube.</p>
+
       <section class="block">
         <label class="dropzone" id="dropzone">
           <input type="file" id="excel" accept=".xlsx,.xls,.xlsm">
@@ -62,7 +91,7 @@
       </section>
 
       <section class="block">
-        <h2 class="block-title">Columnas</h2>
+        <h3 class="block-title">Columnas</h3>
         <div class="cols">
           <label class="field">Col Nombre <input type="number" id="colNombre" value="1" min="0"></label>
           <label class="field">Col Precio <input type="number" id="colPrecio" value="2" min="0"></label>
@@ -74,8 +103,37 @@
         <p class="hint">Base 0 (A = 0). El Excel trae la <strong>Lista de precio 4</strong>; el resto de listas se calcula solo. Categoría y fábrica se guardan en la base pero <strong>no se envían</strong> en el sync.</p>
       </section>
 
+      <div class="actions">
+        <button id="generar" class="btn primary" type="button">⚡ Generar catálogo</button>
+        <button id="subir" class="btn secondary" type="button" disabled>☁️ Subir a la nube</button>
+      </div>
+
+      <div id="status" class="status" role="status"></div>
+
+      <section class="block" id="preview" hidden>
+        <h3 class="block-title">Vista previa (primeros 10)</h3>
+        <div id="previewBody" class="preview"></div>
+        <p class="hint">La lista completa, con edición y borrado, está en <strong>📦 Inventario</strong>.</p>
+      </section>
+
+      <section class="block" id="rollbackBlock">
+        <h3 class="block-title">⏪ Rollback</h3>
+        <p class="hint">Deshacé el último reemplazo del catálogo. El actual se guarda en el otro backup (nunca se pierde) y sube la revisión: <strong>todas las apps se resyncan solas</strong>.</p>
+        <div class="actions">
+          <button id="rollbackBak" class="btn danger" type="button">⏪ Restaurar bak</button>
+          <button id="rollbackBak2" class="btn danger" type="button">⏪ Restaurar bak2</button>
+        </div>
+        <span id="rollbackStatus" class="status"></span>
+      </section>
+    </section>
+
+    <!-- ══ CONFIGURACIÓN ═══════════════════════════════════════════════════ -->
+    <section class="view" id="view-config" hidden>
+      <h2 class="block-title">⚙️ Configuración</h2>
+      <p class="muted inv-sub">Todo lo ajustable del panel: precios, formato de sync y tu cuenta.</p>
+
       <section class="block">
-        <h2 class="block-title">⚙️ Configuración de precios</h2>
+        <h3 class="block-title">💲 Precios</h3>
         <div class="cols">
           <label class="field">IVA % <input type="number" id="cfgIva" step="0.01" min="0" value="21"></label>
           <label class="field">Factor L4 (inversa) % <input type="number" id="cfgInversa" step="0.01" min="0" value="50"></label>
@@ -88,14 +146,14 @@
           Lista n = round(costo neto × (1 + IVA) × factor Ln). El factor de la L4 se deriva solo (1 + inversa / 100).
         </p>
         <div class="actions">
-          <button id="cfgGuardar" class="btn secondary">💾 Guardar precios</button>
-          <button id="cfgReset" class="btn ghost">↺ Valores por defecto</button>
+          <button id="cfgGuardar" class="btn secondary" type="button">💾 Guardar precios</button>
+          <button id="cfgReset" class="btn ghost" type="button">↺ Valores por defecto</button>
         </div>
         <span id="cfgStatus" class="status"></span>
       </section>
 
       <section class="block">
-        <h2 class="block-title">📡 Modo de sync</h2>
+        <h3 class="block-title">📡 Modo de sync</h3>
         <label class="field">
           <span>Formato de <code>/api/v1/sync/v2</code></span>
           <select id="syncMode">
@@ -103,38 +161,83 @@
             <option value="descripcion-costos">Descripción-Costos — { descripcion, costo }</option>
           </select>
         </label>
-        <p class="hint"><code>/api/v1/sync</code> (v1) <strong>no cambia nunca</strong>: las apps viejas siguen recibiendo exactamente el JSON actual. El modo solo decide qué responde el contrato nuevo.</p>
+        <p class="hint"><code>/api/v1/sync</code> (v1) <strong>no cambia nunca</strong>: las apps viejas siguen recibiendo exactamente el JSON actual. El modo solo decide qué responde el contrato nuevo. <strong>Inventario necesita el modo predeterminado</strong> para poder editar (si no, se ve pero no se modifica).</p>
         <div class="actions">
-          <button id="syncGuardar" class="btn secondary">📡 Aplicar modo</button>
+          <button id="syncGuardar" class="btn secondary" type="button">📡 Aplicar modo</button>
         </div>
         <span id="syncStatus" class="status"></span>
       </section>
 
-      <div class="actions">
-        <button id="generar" class="btn primary">⚡ Generar catálogo</button>
-        <button id="subir" class="btn secondary" disabled>☁️ Subir a la nube</button>
-      </div>
-
-      <div id="status" class="status" role="status"></div>
-
-      <section class="block" id="rollbackBlock">
-        <h2 class="block-title">⏪ Rollback</h2>
-        <p class="hint">Deshacé el último reemplazo del catálogo. El actual se guarda en el otro backup (nunca se pierde) y sube la revisión: <strong>todas las apps se resyncan solas</strong>.</p>
-        <div class="actions">
-          <button id="rollbackBak" class="btn danger">⏪ Restaurar bak</button>
-          <button id="rollbackBak2" class="btn danger">⏪ Restaurar bak2</button>
+      <section class="block">
+        <h3 class="block-title">🔑 Cuenta</h3>
+        <div class="actions" style="margin-top:0">
+          <button id="changePwdBtn" class="btn secondary" type="button">Cambiar contraseña</button>
         </div>
-        <span id="rollbackStatus" class="status"></span>
+        <div id="changePwdBlock" class="change-pwd" hidden>
+          <label class="field"><span>Contraseña actual</span><input type="password" id="currentPwd" autocomplete="current-password"></label>
+          <div class="grid2">
+            <label class="field"><span>Nueva contraseña</span><input type="password" id="newPwd" autocomplete="new-password"></label>
+            <label class="field"><span>Repetir</span><input type="password" id="newPwd2" autocomplete="new-password"></label>
+          </div>
+          <button id="savePwdBtn" class="btn primary" type="button">Guardar</button>
+          <span id="changePwdStatus" class="status"></span>
+        </div>
       </section>
+    </section>
 
-      <section id="preview" hidden>
-        <h2 class="block-title">Vista previa</h2>
-        <div id="previewBody" class="preview"></div>
-      </section>
-    </div>
+    <!-- ══ ADMINISTRACIÓN ══════════════════════════════════════════════════ -->
+    <section class="view" id="view-admin" hidden>
+      <h2 class="block-title">🗂️ Administración</h2>
+      <p class="muted inv-sub">Categorías y fábricas del catálogo.</p>
+      <div class="empty">
+        <div class="empty-ico">🗂️</div>
+        <p class="empty-title">Próximamente</p>
+        <p class="muted">Acá se van a poder crear, renombrar y agrupar las categorías y
+          fábricas que viajan en el catálogo.</p>
+      </div>
+    </section>
 
     <footer class="foot">LOLA · panel de catálogo</footer>
   </main>
+
+  <!-- Modal de edición de artículo -->
+  <div class="modal" id="editModal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="edTitle">
+      <div class="modal-head">
+        <h3 id="edTitle">✏️ Editar artículo</h3>
+        <button class="btn ghost" id="edCerrar" type="button" title="Cerrar">✕</button>
+      </div>
+
+      <label class="field"><span>Código único</span><input type="text" id="edCodigo" readonly></label>
+      <label class="field"><span>Descripción</span><input type="text" id="edDesc" autocomplete="off"></label>
+
+      <div class="grid4">
+        <label class="field">L1 <input type="number" id="edL1" min="0" step="1"></label>
+        <label class="field">L2 <input type="number" id="edL2" min="0" step="1"></label>
+        <label class="field">L3 <input type="number" id="edL3" min="0" step="1"></label>
+        <label class="field">L4 <input type="number" id="edL4" min="0" step="1"></label>
+      </div>
+      <div class="actions" style="margin-top:0">
+        <button id="edRecalc" class="btn ghost" type="button">↺ Recalcular L1..L3 desde la L4</button>
+      </div>
+
+      <div class="grid2">
+        <label class="field"><span>Categoría</span><input type="text" id="edCat" autocomplete="off"></label>
+        <label class="field"><span>Fábrica</span><input type="text" id="edFab" autocomplete="off"></label>
+      </div>
+
+      <p class="hint" id="edCosto"></p>
+      <p class="hint">Los costos (neto y con IVA) se derivan de la L4 con la
+        <strong>configuración actual de precios</strong> de Configuración. Subir el
+        artículo cambia la revisión: <strong>las apps se resincronizan solas</strong>.</p>
+
+      <div class="actions">
+        <button id="edGuardar" class="btn primary" type="button">💾 Guardar</button>
+        <button id="edCancelar" class="btn ghost" type="button">Cancelar</button>
+      </div>
+      <span id="edStatus" class="status"></span>
+    </div>
+  </div>
 
   <script src="xlsx.full.min.js"></script>
   <script src="codigoUnico.js"></script>

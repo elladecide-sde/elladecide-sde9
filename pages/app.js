@@ -4,6 +4,12 @@
 // mensajero que reemplaza el catálogo (replace). La regla de codigo_unico vive
 // en codigoUnico.js, port EXACTO del backend (verificado con el catálogo real).
 //
+// El panel está dividido en 4 secciones (tabs):
+//   · Inventario      → lista completa del catálogo + buscador fuzzy + editar/borrar
+//   · Catálogo        → Excel → generar → subir (replace) + rollback
+//   · Configuración   → precios (IVA/factores), modo de sync y contraseña
+//   · Administración  → categorías / fábricas (por ahora vacía)
+//
 // Precios (espejo de backend/src/modelo.ts):
 //   costo + IVA = Lista 4 / (1 + inversa/100)        → Lista 4 / 1,50
 //   costo neto  = (costo + IVA) / (1 + IVA/100)      → Lista 4 / (1,50 × 1,21)
@@ -75,6 +81,30 @@ async function login(username, password) {
     throw new Error(msg);
   }
   return (await res.json()).token;
+}
+
+/**
+ * Llamada autenticada al worker. Centraliza el Bearer, el manejo de errores y
+ * el cierre de sesión automático en 401 (el token vive 24 h).
+ */
+async function apiAdmin(path, { method = 'POST', body } = {}) {
+  const token = getToken();
+  if (!token) {
+    renderAuth();
+    throw new Error('Sesión expirada. Volvé a ingresar.');
+  }
+  const res = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { msg = (await res.json()).error || msg; } catch (e) { /* ignore */ }
+    if (res.status === 401) { clearToken(); renderAuth(); }
+    throw new Error(msg);
+  }
+  return res.json();
 }
 
 // ── Lógica de precios (port de esOferta + calcularCostos) ───────────────────
@@ -188,41 +218,12 @@ function procesarCatalogo(rows, colNombre, colPrecio, colCodigo, colCategoria, c
 
 // ── Subida al backend (reemplazo completo, atómico en el worker) ────────────
 async function subirCatalogo(productos) {
-  const token = getToken();
-  if (!token) throw new Error('Sesión expirada. Volvé a ingresar.');
-  const res = await fetch(`${API_BASE}/api/v1/admin/products`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ products: productos, replace: true }),
-  });
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try { msg = (await res.json()).error || msg; } catch (e) { /* ignore */ }
-    if (res.status === 401) { clearToken(); renderAuth(); }
-    throw new Error(msg);
-  }
-  return res.json(); // { revision, hash, backup }
+  return apiAdmin('/api/v1/admin/products', { body: { products: productos, replace: true } });
 }
 
 // ── Rollback (restaurar un backup del Worker) ───────────────────────────────
 async function rollbackCatalogo(backup) {
-  const token = getToken();
-  if (!token) throw new Error('Sesión expirada. Volvé a ingresar.');
-  const res = await fetch(`${API_BASE}/api/v1/admin/rollback`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ backup }),
-  });
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try { msg = (await res.json()).error || msg; } catch (e) { /* ignore */ }
-    if (res.status === 401) { clearToken(); renderAuth(); }
-    throw new Error(msg);
-  }
-  return res.json(); // { revision, hash, restaurado }
+  return apiAdmin('/api/v1/admin/rollback', { body: { backup } });
 }
 
 function setRollbackStatus(msg, ok) {
@@ -237,6 +238,7 @@ function bindRollback(btnId, backup, label) {
     try {
       setRollbackStatus(`Restaurando ${label}…`, true);
       const r = await rollbackCatalogo(backup);
+      inventario = null; // el catálogo cambió por completo
       setRollbackStatus(`✅ Restaurado ${r.restaurado} — revisión ${r.revision} · hash ${(r.hash || '').slice(0, 8)}…`, true);
     } catch (e) {
       setRollbackStatus('❌ ' + e.message, false);
@@ -249,22 +251,12 @@ bindRollback('rollbackBak2', 'bak2', 'bak2 (el anterior)');
 
 // ── Cambio de contraseña ────────────────────────────────────────────────────
 async function changePassword(currentPassword, newPassword) {
-  const token = getToken();
-  if (!token) throw new Error('Sesión expirada. Volvé a ingresar.');
-  const res = await fetch(`${API_BASE}/api/v1/auth/change-password`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  return apiAdmin('/api/v1/auth/change-password', {
+    body: { current_password: currentPassword, new_password: newPassword },
   });
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try { msg = (await res.json()).error || msg; } catch (e) { /* ignore */ }
-    throw new Error(msg);
-  }
-  return res.json();
 }
 
-// ── UI ──────────────────────────────────────────────────────────────────────
+// ── UI base ─────────────────────────────────────────────────────────────────
 let productosGenerados = null;
 
 function setStatus(msg, ok) {
@@ -279,13 +271,41 @@ function setLoginStatus(msg, ok) {
   el.className = 'status ' + (ok ? 'ok' : 'err');
 }
 
+// ── Secciones (tabs) ────────────────────────────────────────────────────────
+const VISTAS = ['inventario', 'catalogo', 'config', 'admin'];
+let vistaActual = 'inventario';
+
+function setVista(v) {
+  if (!VISTAS.includes(v)) return;
+  vistaActual = v;
+  for (const n of VISTAS) $('view-' + n).hidden = n !== v;
+  document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.vista === v));
+
+  if (v === 'inventario' && inventario === null) cargarInventario();
+  if (v === 'config') cargarModoSync();
+}
+
+document.querySelectorAll('.tab').forEach((b) => {
+  b.addEventListener('click', () => setVista(b.dataset.vista));
+});
+
 function renderAuth() {
   const logged = !!getToken();
-  $('loginBlock').hidden = logged;
+  $('view-login').hidden = logged;
+  $('tabs').hidden = !logged;
   $('sessionBlock').hidden = !logged;
-  $('uploadArea').hidden = !logged;
-  if (!logged) productosGenerados = null;
-  if (logged) cargarModoSync();
+  if (!logged) {
+    productosGenerados = null;
+    inventario = null;
+    vistaActual = 'inventario';
+    for (const n of VISTAS) $('view-' + n).hidden = true;
+    $('invSearch').value = '';
+    $('preview').hidden = true;
+    $('subir').disabled = true;
+    setStatus('', true);
+  } else {
+    setVista(vistaActual);
+  }
 }
 
 $('loginBtn').addEventListener('click', async () => {
@@ -307,7 +327,6 @@ $('loginBtn').addEventListener('click', async () => {
 $('logoutBtn').addEventListener('click', () => {
   clearToken();
   renderAuth();
-  setStatus('', true);
 });
 
 $('changePwdBtn').addEventListener('click', () => {
@@ -339,6 +358,7 @@ $('savePwdBtn').addEventListener('click', async () => {
   }
 });
 
+// ── Sección Catálogo: Excel → generar → subir ───────────────────────────────
 function setArchivo(f) {
   $('fileInfo').textContent = f ? `📄 ${f.name} (${(f.size / 1024).toFixed(0)} KB)` : '';
   $('dzTitle').textContent = f ? f.name : 'Arrastrá el Excel acá';
@@ -405,6 +425,7 @@ $('subir').addEventListener('click', async () => {
   try {
     setStatus('Subiendo (reemplazo del catálogo)…', true);
     const r = await subirCatalogo(productosGenerados);
+    inventario = null; // el catálogo cambió por completo
     setStatus(`☁️ Catálogo reemplazado — revisión ${r.revision} · hash ${(r.hash || '').slice(0, 8)}… · backup ${r.backup}`, true);
   } catch (err) {
     setStatus('❌ ' + err.message, false);
@@ -417,14 +438,31 @@ function renderPreview(r) {
   const fmt = (n) => Number(n).toLocaleString('es-AR', { maximumFractionDigits: 2 });
   const muestra = r.productos.slice(0, 10);
   const tabla = document.createElement('table');
-  tabla.innerHTML =
-    '<thead><tr><th>Código</th><th>Descripción</th><th>Costo neto</th><th>Costo+IVA</th><th>L1</th><th>L2</th><th>L3</th><th>L4</th></tr></thead>';
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  ['Código', 'Descripción', 'Costo neto', 'Costo+IVA', 'L1', 'L2', 'L3', 'L4'].forEach((t) => {
+    const th = document.createElement('th');
+    th.textContent = t;
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+  tabla.appendChild(thead);
+
   const tbody = document.createElement('tbody');
   muestra.forEach((p) => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${p.codigo_unico}</td><td>${p.descripcion}</td>` +
-      `<td>${fmt(p.costo_neto)}</td><td>${fmt(p.costo_iva)}</td>` +
-      p.precios.map((x) => `<td>${x.toLocaleString('es-AR')}</td>`).join('');
+    const celdas = [
+      p.codigo_unico,
+      p.descripcion,
+      fmt(p.costo_neto),
+      fmt(p.costo_iva),
+      ...p.precios.map((x) => Number(x).toLocaleString('es-AR')),
+    ];
+    celdas.forEach((t) => {
+      const td = document.createElement('td');
+      td.textContent = t;
+      tr.appendChild(td);
+    });
     tbody.appendChild(tr);
   });
   tabla.appendChild(tbody);
@@ -438,7 +476,7 @@ function renderPreview(r) {
   $('preview').hidden = false;
 }
 
-// ── Config de precios (UI) ──────────────────────────────────────────────────
+// ── Sección Configuración: precios ──────────────────────────────────────────
 function setCfgStatus(msg, ok) {
   const el = $('cfgStatus');
   el.textContent = msg;
@@ -492,7 +530,7 @@ $('cfgReset').addEventListener('click', () => {
   setCfgStatus('↺ Restaurado a los valores por defecto (21% / 50% / 2.32 · 2.12 · 1.65)', true);
 });
 
-// ── Modo de sync (config guardada en D1) ────────────────────────────────────
+// ── Sección Configuración: modo de sync (config guardada en D1) ─────────────
 function setSyncStatus(msg, ok) {
   const el = $('syncStatus');
   el.textContent = msg;
@@ -513,28 +551,427 @@ async function cargarModoSync() {
 
 $('syncGuardar').addEventListener('click', async () => {
   const modo = $('syncMode').value;
-  const token = getToken();
-  if (!token) { setSyncStatus('Sesión expirada. Volvé a ingresar.', false); return; }
   try {
     setSyncStatus('Aplicando…', true);
-    const res = await fetch(`${API_BASE}/api/v1/admin/sync-config`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ modo }),
-    });
-    if (!res.ok) {
-      let msg = `HTTP ${res.status}`;
-      try { msg = (await res.json()).error || msg; } catch (e) { /* ignore */ }
-      if (res.status === 401) { clearToken(); renderAuth(); }
-      throw new Error(msg);
-    }
-    const j = await res.json();
+    const j = await apiAdmin('/api/v1/admin/sync-config', { body: { modo } });
     setSyncStatus(`✅ Modo "${j.modo}" — /api/v1/sync/v2 responde { ${j.modo === 'descripcion-costos' ? 'descripcion, costo' : 'codigo_unico, descripcion, precios[], categoria, fabrica'} }`, true);
+    inventario = null; // el modo define qué campos trae el inventario
   } catch (e) {
     setSyncStatus('❌ ' + e.message, false);
   }
 });
 
-// Inicial
+// ════════════════════════════════════════════════════════════════════════════
+// Sección Inventario — lista completa + buscador fuzzy token por token
+// ════════════════════════════════════════════════════════════════════════════
+
+let inventario = null;      // [{ codigo_unico, descripcion, precios, categoria, fabrica, _hay, _words, _cod }]
+let invFiltrados = [];      // subconjunto ordenado según la búsqueda
+let invVisible = 0;         // cuántos ya están en el DOM
+let invSinMeta = false;     // modo de sync sin categoría/fábrica
+let invCargando = false;
+const INV_PAGINA = 120;
+
+function setInvStatus(msg, ok) {
+  const el = $('invStatus');
+  el.textContent = msg;
+  el.className = 'status ' + (ok ? 'ok' : 'err');
+}
+
+/** Minúsculas + sin acentos: "Cafetera" y "CAFETERA" y "cafetera" pegan igual. */
+function normalizar(s) {
+  return String(s ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+const hayDe = (p) => normalizar([p.codigo_unico, p.descripcion, p.categoria, p.fabrica].filter(Boolean).join(' '));
+
+/** Índice de búsqueda precalculado: hay (texto pegado) + palabras sueltas + código. */
+const indexar = (p) => {
+  const hay = hayDe(p);
+  return { ...p, _hay: hay, _words: hay.split(/\s+/), _cod: normalizar(p.codigo_unico) };
+};
+
+/**
+ * Levenshtein CON CORTE: devuelve max+1 en cuanto la fila se pasa, así no
+ * sigue gastando CPU en palabras que ya no pueden competir.
+ */
+function editarDistCorte(a, b, max) {
+  const la = a.length;
+  const lb = b.length;
+  if (Math.abs(la - lb) > max) return max + 1;
+  let prev = new Array(lb + 1);
+  let cur = new Array(lb + 1);
+  for (let j = 0; j <= lb; j++) prev[j] = j;
+  for (let i = 1; i <= la; i++) {
+    cur[0] = i;
+    let minFila = i;
+    for (let j = 1; j <= lb; j++) {
+      const costo = a[i - 1] === b[j - 1] ? 0 : 1;
+      const v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + costo);
+      cur[j] = v;
+      if (v < minFila) minFila = v;
+    }
+    if (minFila > max) return max + 1;
+    const t = prev; prev = cur; cur = t;
+  }
+  return prev[lb];
+}
+
+/**
+ * Score de UN token contra un artículo.
+ *   · 100+  → el token está como substring (bonus si arranca una palabra o si
+ *             está al principio: "cocina" pega antes en "cocina express").
+ *   · 30-45 → el token pegó contra UNA palabra con ≤ 1 error (≥4 letras) o
+ *             ≤ 2 errores (≥7 letras): "esprex" → "espresso".
+ *   · 0     → no pegó: el token descarta el artículo (AND entre tokens).
+ */
+function scoreToken(tok, item) {
+  const text = item._hay;
+  const i = text.indexOf(tok);
+  if (i >= 0) {
+    const prevChar = i === 0 ? ' ' : text[i - 1];
+    const alInicioPalabra = !/[a-z0-9]/.test(prevChar);
+    return 100 + (alInicioPalabra ? 60 : 0) + Math.max(0, 40 - i);
+  }
+  if (tok.length < 4) return 0;
+  const max = tok.length >= 7 ? 2 : 1;
+  let mejor = max + 1;
+  for (const w of item._words) {
+    if (Math.abs(w.length - tok.length) > max) continue;
+    const d = editarDistCorte(tok, w, max);
+    if (d < mejor) {
+      mejor = d;
+      if (mejor === 0 || (max === 1 && mejor === 1)) break;
+    }
+  }
+  return mejor <= max ? 60 - mejor * 15 : 0;
+}
+
+/**
+ * Búsqueda difusa POR TOKENS: la query se parte por espacios y TODOS los
+ * tokens tienen que pegar (AND), en cualquier orden y sin importar
+ * mayúsculas/acentos. Devuelve el puntaje total o -1 si descarta.
+ */
+function fuzzyScore(query, item) {
+  const q = normalizar(query).trim();
+  if (!q) return 0;
+  let total = 0;
+  for (const tok of q.split(/\s+/)) {
+    const s = scoreToken(tok, item);
+    if (s <= 0) return -1;
+    total += s;
+  }
+  return total;
+}
+
+async function cargarInventario() {
+  if (invCargando) return;
+  invCargando = true;
+  setInvStatus('Cargando inventario…', true);
+  $('invMeta').textContent = 'Cargando…';
+  try {
+    let items = [];
+    let rev = '';
+    let hash = '';
+    let sinMeta = false;
+
+    const res = await fetch(`${API_BASE}/api/v1/sync/v2`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const j = await res.json();
+
+    if (j.format === 'predeterminado' && Array.isArray(j.products)) {
+      rev = j.revision; hash = j.hash;
+      items = j.products.map((p) => ({
+        codigo_unico: String(p.codigo_unico ?? ''),
+        descripcion: String(p.descripcion ?? ''),
+        precios: Array.isArray(p.precios) ? p.precios : [],
+        categoria: p.categoria || '',
+        fabrica: p.fabrica || '',
+      }));
+    } else {
+      // Modo "descripcion-costos": no trae código ni metadatos → contrato v1
+      // (congelado, siempre trae codigo_unico + nombre + precios).
+      sinMeta = true;
+      const r1 = await fetch(`${API_BASE}/api/v1/sync`);
+      if (!r1.ok) throw new Error(`HTTP ${r1.status}`);
+      const j1 = await r1.json();
+      rev = j1.revision; hash = j1.hash;
+      items = (j1.products || []).map((p) => ({
+        codigo_unico: String(p.codigo_unico ?? ''),
+        descripcion: String(p.nombre ?? ''),
+        precios: Array.isArray(p.precios) ? p.precios : [],
+        categoria: '',
+        fabrica: '',
+      }));
+    }
+
+    inventario = items.map(indexar);
+    invSinMeta = sinMeta;
+
+    const meta = `rev ${rev} · hash ${String(hash || '').slice(0, 8)}…`;
+    $('invMeta').textContent = `${inventario.length} artículos · ${meta}`;
+    aplicarBusqueda();
+    setInvStatus(sinMeta
+      ? '⚠️ El modo de sync actual no expone categoría/fábrica: se pueden ver y borrar, pero no editar.'
+      : '', !sinMeta);
+  } catch (e) {
+    inventario = inventario || [];
+    $('invMeta').textContent = 'Sin conexión con el backend';
+    aplicarBusqueda();
+    setInvStatus('❌ No se pudo cargar el inventario: ' + e.message, false);
+  } finally {
+    invCargando = false;
+  }
+}
+
+function aplicarBusqueda() {
+  if (!inventario) return;
+  const q = $('invSearch').value;
+  const normQ = normalizar(q).trim();
+
+  if (!normQ) {
+    invFiltrados = inventario.slice().sort((a, b) => a.descripcion.localeCompare(b.descripcion, 'es'));
+  } else {
+    const conScore = [];
+    for (const p of inventario) {
+      const s = fuzzyScore(normQ, p);
+      if (s < 0) continue;
+      conScore.push({ p, s: p._cod === normQ ? s + 1000 : s });
+    }
+    conScore.sort((a, b) => b.s - a.s || a.p.descripcion.localeCompare(b.p.descripcion, 'es'));
+    invFiltrados = conScore.map((x) => x.p);
+  }
+
+  invVisible = INV_PAGINA;
+  const total = inventario.length;
+  $('invCount').textContent = normQ
+    ? `${invFiltrados.length} de ${total} artículos`
+    : `${total} artículos`;
+  pintarInventario();
+}
+
+function filaInventario(p) {
+  const row = document.createElement('div');
+  row.className = 'inv-row';
+  row.dataset.codigo = p.codigo_unico;
+
+  const main = document.createElement('div');
+  main.className = 'inv-main';
+  const code = document.createElement('span');
+  code.className = 'inv-code';
+  code.textContent = p.codigo_unico;
+  const desc = document.createElement('span');
+  desc.className = 'inv-desc';
+  desc.textContent = p.descripcion;
+  const tags = document.createElement('span');
+  tags.className = 'inv-tags';
+  tags.textContent = [p.categoria, p.fabrica].filter(Boolean).join(' · ');
+  main.append(code, desc, tags);
+
+  const precios = document.createElement('div');
+  precios.className = 'inv-precios';
+  (p.precios || []).forEach((n, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'precio-chip';
+    const b = document.createElement('b');
+    b.textContent = `L${i + 1}`;
+    chip.append(b, document.createTextNode(Number(n).toLocaleString('es-AR')));
+    precios.appendChild(chip);
+  });
+
+  const acc = document.createElement('div');
+  acc.className = 'inv-acc';
+  const bEdit = document.createElement('button');
+  bEdit.type = 'button';
+  bEdit.className = 'btn ghost';
+  bEdit.dataset.accion = 'editar';
+  bEdit.textContent = '✏️';
+  bEdit.title = 'Editar';
+  const bDel = document.createElement('button');
+  bDel.type = 'button';
+  bDel.className = 'btn ghost';
+  bDel.dataset.accion = 'borrar';
+  bDel.textContent = '🗑️';
+  bDel.title = 'Eliminar';
+  if (invSinMeta) {
+    bEdit.disabled = true;
+    bEdit.title = 'No disponible con el modo de sync actual (Configuración → modo)';
+  }
+  acc.append(bEdit, bDel);
+
+  row.append(main, precios, acc);
+  return row;
+}
+
+function pintarInventario() {
+  const cont = $('invList');
+  cont.innerHTML = '';
+  $('invMore').hidden = true;
+
+  if (!inventario) return;
+
+  if (!inventario.length) {
+    cont.innerHTML = '<div class="empty"><div class="empty-ico">📦</div>' +
+      '<p class="empty-title">El catálogo está vacío</p>' +
+      '<p class="muted">Generá y subí uno desde <strong>📂 Catálogo</strong>.</p></div>';
+    return;
+  }
+
+  if (!invFiltrados.length) {
+    cont.innerHTML = '<div class="empty"><div class="empty-ico">🔍</div>' +
+      '<p class="empty-title">Sin resultados</p>' +
+      '<p class="muted">Ningún artículo coincide con esa búsqueda.</p></div>';
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < invVisible && i < invFiltrados.length; i++) {
+    frag.appendChild(filaInventario(invFiltrados[i]));
+  }
+  cont.appendChild(frag);
+
+  if (invFiltrados.length > invVisible) {
+    $('invMore').hidden = false;
+    $('invMoreBtn').textContent = `Ver más resultados (${invFiltrados.length - invVisible} restantes)`;
+  }
+}
+
+let invTimer = null;
+$('invSearch').addEventListener('input', () => {
+  clearTimeout(invTimer);
+  invTimer = setTimeout(aplicarBusqueda, 140);
+});
+$('invSearch').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { $('invSearch').value = ''; aplicarBusqueda(); }
+});
+$('invMoreBtn').addEventListener('click', () => {
+  invVisible += INV_PAGINA;
+  pintarInventario();
+});
+$('invRecargar').addEventListener('click', () => { inventario = null; cargarInventario(); });
+
+$('invList').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-accion]');
+  if (!btn) return;
+  const row = btn.closest('.inv-row');
+  const p = inventario && inventario.find((x) => x.codigo_unico === row.dataset.codigo);
+  if (!p) return;
+  if (btn.dataset.accion === 'editar') abrirEdicion(p);
+  else borrarProducto(p);
+});
+
+// ── Edición de un artículo ──────────────────────────────────────────────────
+function setEdStatus(msg, ok) {
+  const el = $('edStatus');
+  el.textContent = msg;
+  el.className = 'status ' + (ok ? 'ok' : 'err');
+}
+
+const edPrecios = () => [1, 2, 3, 4].map((i) => Number($(`edL${i}`).value));
+
+function pintarCostoEdicion() {
+  const l4 = Number($('edL4').value);
+  if (!Number.isFinite(l4) || l4 <= 0) { $('edCosto').textContent = ''; return; }
+  const c = calcularPrecios(l4);
+  const fmt = (n) => Number(n).toLocaleString('es-AR', { maximumFractionDigits: 2 });
+  $('edCosto').textContent =
+    `Costo neto ≈ ${fmt(c.costo_neto)} · Costo + IVA ≈ ${fmt(c.costo_iva)} ` +
+    `(IVA ${CFG.iva}% · inversa ${CFG.inversaLista}%)`;
+}
+
+$('edL4').addEventListener('input', pintarCostoEdicion);
+
+function abrirEdicion(p) {
+  $('edCodigo').value = p.codigo_unico;
+  $('edDesc').value = p.descripcion;
+  (p.precios || []).slice(0, 4).forEach((n, i) => { $(`edL${i + 1}`).value = n; });
+  for (let i = (p.precios || []).length; i < 4; i++) $(`edL${i + 1}`).value = '';
+  $('edCat').value = p.categoria || '';
+  $('edFab').value = p.fabrica || '';
+  setEdStatus('', true);
+  pintarCostoEdicion();
+  $('editModal').hidden = false;
+  $('edDesc').focus();
+  $('edDesc').select();
+}
+
+function cerrarEdicion() {
+  $('editModal').hidden = true;
+}
+
+$('edCerrar').addEventListener('click', cerrarEdicion);
+$('edCancelar').addEventListener('click', cerrarEdicion);
+$('editModal').addEventListener('click', (e) => { if (e.target === $('editModal')) cerrarEdicion(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('editModal').hidden) cerrarEdicion();
+});
+
+/** Recalcula L1..L3 desde la L4 con la config actual (o las 4 iguales si es oferta). */
+$('edRecalc').addEventListener('click', () => {
+  const l4 = Number($('edL4').value);
+  if (!Number.isFinite(l4) || l4 <= 0) { setEdStatus('La L4 tiene que ser un número > 0', false); return; }
+  const c = calcularPrecios(l4);
+  if (esOferta($('edDesc').value)) {
+    for (let i = 1; i <= 4; i++) $(`edL${i}`).value = Math.round(l4);
+  } else {
+    $('edL1').value = c.precios[0];
+    $('edL2').value = c.precios[1];
+    $('edL3').value = c.precios[2];
+    $('edL4').value = Math.round(l4);
+  }
+  pintarCostoEdicion();
+  setEdStatus('↺ Listas recalculadas con la configuración actual — guardá para aplicar', true);
+});
+
+$('edGuardar').addEventListener('click', async () => {
+  const codigo = $('edCodigo').value;
+  const desc = $('edDesc').value.trim();
+  const l = edPrecios();
+  if (!desc) { setEdStatus('La descripción no puede quedar vacía', false); return; }
+  if (l.some((n) => !Number.isFinite(n) || n <= 0)) { setEdStatus('Los 4 precios tienen que ser números > 0', false); return; }
+
+  const producto = {
+    codigo_unico: codigo,
+    descripcion: desc,
+    precios: l.map((n) => Math.round(n)),
+    categoria: $('edCat').value.trim(),
+    fabrica: $('edFab').value.trim(),
+  };
+  const c = calcularPrecios(l[3]);
+  producto.costo_neto = c.costo_neto;
+  producto.costo_iva = c.costo_iva;
+
+  try {
+    setEdStatus('Guardando…', true);
+    const r = await apiAdmin('/api/v1/admin/products', { body: { products: [producto] } });
+    const i = inventario.findIndex((x) => x.codigo_unico === codigo);
+    if (i >= 0) inventario[i] = indexar(producto);
+    aplicarBusqueda();
+    cerrarEdicion();
+    setInvStatus(`✅ "${desc}" actualizado — revisión ${r.revision} · las apps se resincronizan solas`, true);
+  } catch (e) {
+    setEdStatus('❌ ' + e.message, false);
+  }
+});
+
+// ── Eliminación de un artículo ──────────────────────────────────────────────
+async function borrarProducto(p) {
+  const seguro = confirm(
+    `¿Eliminar "${p.descripcion}" (${p.codigo_unico})?\n\n` +
+    'Se baja del catálogo activo y sube la revisión: todas las apps se resincronizan solas.',
+  );
+  if (!seguro) return;
+  try {
+    setInvStatus(`Eliminando ${p.codigo_unico}…`, true);
+    const r = await apiAdmin(`/api/v1/admin/products/${encodeURIComponent(p.codigo_unico)}`, { method: 'DELETE' });
+    inventario = inventario.filter((x) => x.codigo_unico !== p.codigo_unico);
+    aplicarBusqueda();
+    setInvStatus(`🗑️ "${p.descripcion}" eliminado — revisión ${r.revision}`, true);
+  } catch (e) {
+    setInvStatus('❌ ' + e.message, false);
+  }
+}
+
+// ── Inicial ─────────────────────────────────────────────────────────────────
 pintarCfg();
 renderAuth();

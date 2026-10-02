@@ -1,20 +1,54 @@
-# LOLA — Interfaz de subida de catálogo (Cloudflare Pages)
+# LOLA — Panel de catálogo (Cloudflare Pages)
 
-Web estática para subir el catálogo de LOLA. **La página es la generadora**: lee
-el Excel (SheetJS), calcula las 4 listas y genera `codigo_unico` en el navegador
-(`codigoUnico.js`, port EXACTO del backend). El Worker es el mensajero que
-**reemplaza** el catálogo con backup rotativo.
+Web estática para administrar el catálogo de LOLA. **La página es la generadora**:
+lee el Excel (SheetJS), calcula las 4 listas y genera `codigo_unico` en el
+navegador (`codigoUnico.js`, port EXACTO del backend). El Worker es el mensajero
+que **reemplaza** el catálogo con backup rotativo.
 
-## Qué hace
+## Secciones
+
+El panel es una SPA con 4 tabs (visibles solo con sesión iniciada):
+
+| Tab | Qué hace |
+| --- | --- |
+| **📦 Inventario** | Catálogo completo, buscador fuzzy, editar y eliminar artículos |
+| **📂 Catálogo** | Excel → columnas → generar → subir (replace) + rollback |
+| **⚙️ Configuración** | Precios (IVA/factores), modo de sync y contraseña |
+| **🗂️ Administración** | Categorías / fábricas *(todavía vacía)* |
+
+### Inventario
+
+- Lee `GET /api/v1/sync/v2` (una sola vez; se reutiliza al volver a la tab) y
+  pagina el listado de a 120 filas.
+- **Buscador fuzzy token por token**: la query se parte por espacios y *todos*
+  los tokens tienen que pegar (AND), en cualquier orden. Normaliza a minúsculas
+  y sin acentos. Por token:
+  1. substring sobre `codigo + descripción + categoría + fábrica`
+     (bonus si arranca una palabra → "cocina" pega antes en "cocina express");
+  2. si no, tolerancia a typos contra palabras sueltas: Levenshtein con corte
+     ≤ 1 error (tokens ≥ 4 letras) o ≤ 2 errores (≥ 7 letras) →
+     "express" pega en "espresso", "cafetra" en "cafetera";
+  3. si no, el token descarta el artículo.
+- **Editar** → modal con descripción, L1..L4, categoría y fábrica. Los costos se
+  derivan de la L4 con la config de precios actual y se guardan con
+  `POST /api/v1/admin/products` (**upsert parcial**, sin `replace`).
+  Botón "Recalcula L1..L3 desde la L4".
+- **Eliminar** → `DELETE /api/v1/admin/products/:codigo_unico`.
+- Ambas acciones suben la revisión: las apps se resincronizan solas.
+- Si el modo de sync es `descripcion-costos`, v2 no trae código ni metadatos →
+  el inventario cae al contrato v1 (solo lectura + borrado) y **bloquea la
+  edición** para no pisar categoría/fábrica con strings vacíos.
+
+## Generación y subida
 
 1. Elegís el Excel de precios (`.xlsx`/`.xls`).
 2. Configurás columnas (nombre, precio, código, categoría, fábrica) y filas de header.
-3. Ajustás **Configuración de precios**: IVA %, factor inverso de la L4 y los
+3. En **Configuración** ajustás **Precios**: IVA %, factor inverso de la L4 y los
    factores de L1..L3 (persisten en `localStorage`; defaults 21 / 50 / 2,32 /
    2,12 / 1,65).
-4. Elegís el **Modo de sync** (`predeterminado` o `descripcion-costos`) →
-   `POST /api/v1/admin/sync-config`; el worker lo guarda en `config` y queda
-   para `GET /api/v1/sync/v2`.
+4. En **Configuración** elegís el **Modo de sync** (`predeterminado` o
+   `descripcion-costos`) → `POST /api/v1/admin/sync-config`; el worker lo guarda
+   en `config` y queda para `GET /api/v1/sync/v2`.
 5. **Generar catálogo** → parsea en el navegador, calcula costo neto, costo+IVA
    y las 4 listas, y genera `codigo_unico` (misma regla que el CLI:
    `abrev(marca) + modelo`).
@@ -34,8 +68,9 @@ IVA y factores vienen de la config (no están hardcodeados). Oferta/liquidación
 (nombre termina en `.`, `oferta` o `liq`) → las 4 listas iguales al precio del
 Excel.
 
-La vista previa muestra **todas las columnas del modelo** (Código, Descripción,
-Costo neto, Costo+IVA, L1..L4) y la subida manda el modelo completo
+La vista previa muestra las **primeras 10 filas** del modelo (Código, Descripción,
+Costo neto, Costo+IVA, L1..L4) — la lista completa y editable está en
+**Inventario**. La subida manda el modelo completo
 (`codigo_unico`, `descripcion`, `costo_neto`, `costo_iva`, `precios`,
 `categoria`, `fabrica`) — el worker acepta también el shape viejo
 (`nombre` + `precios`) por compatibilidad.
@@ -79,9 +114,9 @@ URL: `https://lola-catalogo.pages.dev`.
 
 ```
 pages/
-├── index.html        ← UI de subida
+├── index.html        ← UI: login + tabs (Inventario / Catálogo / Config / Admin) + modal de edición
 ├── codigoUnico.js    ← regla de codigo_unico (port 1:1 del backend)
-├── app.js            ← login + parseo + precios + subida (replace)
+├── app.js            ← login + navegación + inventario/buscador + precios + subida (replace)
 ├── styles.css        ← tema oscuro LOLA
 └── xlsx.full.min.js  ← SheetJS (copiado de la extensión)
 ```
