@@ -8,6 +8,7 @@
 
 DROP TABLE IF EXISTS producto_categoria;
 DROP TABLE IF EXISTS categorias;
+DROP TABLE IF EXISTS config;
 DROP TABLE IF EXISTS auth;
 DROP TABLE IF EXISTS products_bak2;
 DROP TABLE IF EXISTS products_bak;

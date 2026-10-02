@@ -11,21 +11,25 @@ Sync **offline-first** del catálogo de LOLA, por **HASH + catálogo completo**.
 
 ```
 backend/
-├── schema.sql              ← tablas: metadata, products, products_bak, products_bak2, auth, categorias
+├── schema.sql              ← esquema D1: metadata, config, products, backups, auth, categorias
 ├── src/
-│   ├── index.ts            ← Worker: rutas version/sync/admin (+ rollback)
-│   ├── hash.ts             ← hash canónico SHA-256 del catálogo
+│   ├── index.ts            ← Worker: rutas version/sync v1+v2/sync-config/admin
+│   ├── hash.ts             ← hash canónico SHA-256 del catálogo (NO tocar)
 │   ├── hash.test.ts        ← golden tests del hash (paridad Android)
 │   ├── codigoUnico.ts      ← regla de codigo_unico (paridad exacta con pages/codigoUnico.js)
 │   ├── codigoUnico.test.ts ← tests del generador de códigos
-│   ├── importCatalogo.ts   ← núcleo compartido: parseo + precios + códigos
+│   ├── modelo.ts           ← modelo de producto + fórmula de precios (fuente de verdad)
+│   ├── modelo.test.ts      ← tests de derivación de costos/listas
+│   ├── importCatalogo.ts   ← núcleo compartido: parseo + precios + códigos (+ categoria/fabrica)
+│   ├── importCatalogo.test.ts
 │   └── auth.ts             ← JWT, PBKDF2, comparación segura
 ├── scripts/
 │   ├── import-catalogo.ts  ← CLI (dry-run + subida + mapa para sde11)
 │   ├── migrate.sql         ← migraciones idempotentes (backups + seed)
+│   ├── reset.sql           ← DROP total de tablas (reseteo de base)
 │   └── bump.sql            ← bump manual de revisión (fallback)
 ├── wrangler.jsonc          ← config del Worker + binding D1
-└── package.json
+└── package.json            ← scripts db:init / db:migrate / db:reset / typecheck / test
 ```
 
 ## Identidad: `codigo_unico`
@@ -49,17 +53,53 @@ determinística por el import, derivada de la marca + el código de artículo:
 > foto `CODIGO_UNICO_COLOR.jpg`. La búsqueda del usuario sigue siendo fuzzy por
 > nombre; el `codigo_unico` es la llave interna.
 
+## Modelo de producto (v2)
+
+El dato base es **descripción + costo**; de ahí se derivan y se conservan todos
+los cálculos (fuente de verdad: `src/modelo.ts`):
+
+```
+costo_iva  = Lista 4 / (1 + inversaLista/100)      = Lista 4 / 1,50
+costo_neto = costo_iva / (1 + IVA/100)             = Lista 4 / (1,50 × 1,21)
+Lista n    = round(costo_neto × (1 + IVA/100) × factor_n)
+```
+
+Nada se descarta: `costo_neto`, `costo_iva` y las 4 listas viven en la fila
+(`products` tiene 10 columnas). `categoria` y `fabrica` se persisten pero **no**
+se envían en el sync. IVA y factores son configurables (CLI `--iva`,
+`--listas`…; UI en `pages/`).
+
 ## Sync (por HASH, catálogo completo)
 
 ```
 1. GET /api/v1/version → { revision, hash }
 2. hash_local == hash → FIN (0 requests más)
-3. hash distinto → GET /api/v1/sync → catálogo COMPLETO → el cliente reemplaza su base local
+3. hash distinto → GET /api/v1/sync (v1) o /api/v1/sync/v2 → catálogo COMPLETO
+   → el cliente reemplaza su base local
 ```
+
+- **`GET /api/v1/sync` (v1)** → **contrato CONGELADO**: `{ codigo_unico,
+  nombre, precios[4] }`. Las apps viejas siguen hablando este idioma. No se toca.
+- **`GET /api/v1/sync/v2`** → contrato nuevo, la forma depende de
+  `config.sync_mode` (ver abajo).
 
 No hay tombstones ni revisión por artículo: el reemplazo es el modelo. Cuando los
 precios cambian, cambian TODOS, así que el resync total es el camino natural
 (~300 KB, 1-2 s sobre wifi). El hash evita bajar si nada cambió.
+
+### Modo de sync (config en D1)
+
+La fila `config.sync_mode` define cómo responde `/api/v1/sync/v2`:
+
+| Modo | `GET /api/v1/sync/v2` devuelve por producto |
+|------|----------------------------------------------|
+| `predeterminado` (default) | `{ codigo_unico, descripcion, precios[4], categoria, fabrica }` |
+| `descripcion-costos` | `{ descripcion, costo }` (`costo` = `costo_neto`; sin listas, sin categoría, sin fábrica) |
+
+Se lee con `GET /api/v1/sync-config` (libre) y se escribe con
+`POST /api/v1/admin/sync-config { modo }` (JWT). **No versiona el catálogo**
+(no sube revisión ni cambia el hash) y `/api/v1/sync` (v1) jamás lo mira: es
+solo el formato del contrato nuevo.
 
 ## Reemplazo con backups (2 versiones anteriores)
 
@@ -86,11 +126,30 @@ npm run import -- ../catálogo.xlsx --api http://localhost:8787 --user admin --p
 ```
 
 El Excel de ADM viene con **2 campos**: nombre (todo mezclado) y precio de
-Lista 4 → inversa (`costo = precio / (1.21 * 1.50)`) → 4 listas. Oferta (termina
-en `.`, `oferta` o `liq`) → las 4 iguales.
+Lista 4 → inversa (`costo_iva = L4 / (1 + inversa/100)`, default 1,50) →
+`costo_neto = costo_iva / (1 + IVA/100)` (default 21%) → 4 listas con los
+factores configurados. Oferta (termina en `.`, `oferta` o `liq`) → las 4
+iguales al precio del Excel.
 
-Flags: `--col-nombre`, `--col-precio`, `--skip`, `--marcas=archivo.json`
-(lista de carpetas de `IMAGENES-LOLA` para códigos más limpios), `--out`.
+### Flags del CLI (`scripts/import-catalogo.ts`)
+
+| Flag | Default | Descripción |
+|------|---------|-------------|
+| `--col-nombre=N` | `0` | Columna del nombre |
+| `--col-precio=N` | `1` | Columna del precio (Lista 4) |
+| `--col-codigo=N` | `-1` (auto) | Columna de código opcional |
+| `--col-categoria=N` | `-1` (vacía) | Columna de categoría |
+| `--col-fabrica=N` | `-1` (vacía) | Columna de fábrica |
+| `--skip=N` | `1` | Filas de header a saltar (`0` si no hay) |
+| `--iva=N` | `21` | IVA en % |
+| `--inversa-iva=N` | `21` | Inversa del IVA en % (para volver al costo neto) |
+| `--inversa-lista=N` | `50` | Inversa de la L4 en % (`50` → dividir por 1,50) |
+| `--listas=a,b,c,d` | `2.32,2.12,1.65,1.50` | Factores de L1..L4 |
+| `--oferta-keywords=x,y` | `oferta,liq` | Palabras que marcan oferta (además de terminar en `.`) |
+| `--marcas=archivo.json` | — | Lista de carpetas de `IMAGENES-LOLA` para códigos más limpios |
+| `--api=URL` | — | Si se pasa, sube al Worker (requiere `--user`/`--password`) |
+| `--user=U` / `--password=P` | — | Credenciales de login del Worker |
+| `--out=DIR` | `scripts/salida` | Directorio de salidas |
 
 Salidas en `--out`: `catalogo.json` (para D1) y `mapa-catalogo.json` (para sde11,
 mismo shape que `GET /api/v1/mapa-catalogo`).
@@ -141,6 +200,22 @@ npm run deploy   # producción
 
 ## Contrato de API
 
+| Método | Ruta | Auth | Qué hace |
+|--------|-----|------|----------|
+| GET | `/api/v1/version` | libre | `{ revision, hash }` |
+| GET | `/api/v1/sync` | libre | Catálogo completo — **v1 congelado** |
+| GET | `/api/v1/sync/v2` | libre | Catálogo completo — contrato nuevo según `sync_mode` |
+| GET | `/api/v1/sync-config` | libre | `{ modo, opciones }` |
+| GET | `/api/v1/mapa-catalogo` | libre | Mapa para el editor de fotos (sde11) |
+| POST | `/api/v1/auth/login` | credenciales | JWT (24 h) |
+| POST | `/api/v1/auth/change-password` | JWT | Cambia la contraseña admin |
+| POST | `/api/v1/admin/products` | JWT | Upsert o reemplazo (`replace: true`) |
+| POST | `/api/v1/admin/import` | JWT | Importa filas de Excel (el worker calcula) |
+| POST | `/api/v1/admin/sync-config` | JWT | Cambia el modo de sync (`{ modo }`) |
+| POST | `/api/v1/admin/rollback` | JWT | Restaura `bak` / `bak2` |
+| DELETE | `/api/v1/admin/products/:codigo_unico` | JWT | Borra un producto |
+| POST | `/api/v1/admin/rehash` | JWT | Recalcula el hash |
+
 Todas las respuestas son `Content-Type: application/json; charset=utf-8` con
 `Cache-Control: no-store`. El Worker envía CORS headers en TODAS las respuestas:
 
@@ -190,6 +265,93 @@ curl http://localhost:8787/api/v1/sync
 ```
 
 `precios` = `[L1, L2, L3, L4]` (Lista 1 a 4, enteros redondeados).
+
+### GET /api/v1/sync/v2
+
+Catálogo completo en el **contrato nuevo**. La forma de cada producto depende de
+`config.sync_mode` (ver "Modo de sync"). `GET /api/v1/sync` (v1) no cambia.
+
+**Headers:** ninguno especial.
+
+```bash
+curl http://localhost:8787/api/v1/sync/v2
+```
+
+Modo `predeterminado` (default):
+
+```json
+{
+  "revision": 42,
+  "hash": "a1b2c3d4...",
+  "format": "predeterminado",
+  "products": [
+    {
+      "codigo_unico": "BAK2000",
+      "descripcion": "BAKHOU 2000 LISO ALGODON HOMBRE",
+      "precios": [1200, 1100, 1000, 900],
+      "categoria": "",
+      "fabrica": "BAKHOU"
+    }
+  ]
+}
+```
+
+Modo `descripcion-costos`:
+
+```json
+{
+  "revision": 42,
+  "hash": "a1b2c3d4...",
+  "format": "descripcion-costos",
+  "products": [
+    { "descripcion": "BAKHOU 2000 LISO ALGODON HOMBRE", "costo": 517.02 }
+  ]
+}
+```
+
+`costo` = `costo_neto` (sin IVA). En este modo no hay listas, costo+IVA,
+categoría ni fábrica.
+
+### GET /api/v1/sync-config
+
+Devuelve el modo de sync vigente y las opciones válidas. Lectura libre: es solo
+un formato.
+
+**Headers:** ninguno especial.
+
+```bash
+curl http://localhost:8787/api/v1/sync-config
+```
+
+```json
+{ "modo": "predeterminado", "opciones": ["predeterminado", "descripcion-costos"] }
+```
+
+### POST /api/v1/admin/sync-config
+
+Cambia el modo de sync. **No versiona el catálogo** (no toca revisión ni hash):
+solo cambia la forma en que responde `/api/v1/sync/v2`.
+
+**Headers requeridos:**
+```
+Content-Type: application/json
+Authorization: Bearer <token>
+```
+
+```bash
+curl -X POST http://localhost:8787/api/v1/admin/sync-config \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGci..." \
+  -d '{"modo": "descripcion-costos"}'
+```
+
+```json
+{ "modo": "descripcion-costos" }
+```
+
+Errores:
+- `400` → `modo` inválido (debe ser `predeterminado` o `descripcion-costos`)
+- `401` → token inválido/expirado
 
 ### GET /api/v1/mapa-catalogo
 
@@ -440,12 +602,33 @@ curl -X POST http://localhost:8787/api/v1/admin/rehash \
 | Tabla | Propósito |
 |-------|-----------|
 | `metadata` | Singleton: `revision_number`, `catalog_hash`, `backup_state` |
+| `config` | Ajustes del operador: `sync_mode` (no versiona el catálogo) |
 | `products` | Catálogo activo (PK: `codigo_unico`) |
-| `products_bak` | Backup rotativo 1 |
-| `products_bak2` | Backup rotativo 2 |
+| `products_bak` | Backup rotativo 1 (mismo esquema que `products`) |
+| `products_bak2` | Backup rotativo 2 (mismo esquema que `products`) |
 | `auth` | Credenciales admin (hash PBKDF2 + salt) |
 | `categorias` | Taxonomía (reservada, pendiente de poblar) |
 | `producto_categoria` | Relación producto → categoría |
+
+### Columnas de `products` (y sus backups — 10 columnas, idénticas)
+
+| Columna | Tipo | Descripción |
+|---------|------|-------------|
+| `codigo_unico` | TEXT PK | Identidad estable del producto |
+| `descripcion` | TEXT | Nombre completo (antes `nombre`) |
+| `costo_neto` | REAL | Sin IVA: `L4 / (1,50 × 1,21)` |
+| `costo_iva` | REAL | Costo + IVA: `L4 / 1,50` |
+| `lista1` … `lista4` | REAL | Las 4 listas |
+| `categoria` | TEXT | Se persiste, **no** se sincroniza |
+| `fabrica` | TEXT | Se persiste, **no** se sincroniza |
+| `updated_at` | TEXT | `datetime('now')` |
+
+`metadata`: `key`, `revision_number`, `catalog_hash`, `backup_state`, `updated_at`.
+`config`: `key`, `value`, `updated_at` (fila sembrada: `sync_mode = 'predeterminado'`).
+
+> Si cambiás el modelo, cambialo en `schema.sql` **y** en `scripts/migrate.sql`
+> (las tablas de backup son copias exactas; el `INSERT ... SELECT` del worker
+> falla si no calzan las columnas).
 
 ## Hash canónico
 
@@ -469,7 +652,9 @@ con cambios en `backend/`:
 1. `ALTER TABLE` → agrega `backup_state` si falta (base vieja, tolera error)
 2. `schema.sql` → estructura completa (idempotente)
 3. `migrate.sql` → backups + seed (idempotente)
-4. `wrangler deploy` → deploy del Worker
+4. `wrangler deploy` → deploy del Worker + `secret put` de ADMIN_USER /
+   ADMIN_PASSWORD / JWT_SECRET (solo si el secreto de GitHub correspondiente
+   está definido)
 
 Secrets de GitHub requeridos:
 - `CLOUDFLARE_API_TOKEN`

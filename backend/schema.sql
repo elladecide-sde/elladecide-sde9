@@ -3,6 +3,16 @@
 -- Sync por HASH: cada cliente pregunta GET /version (hash) y si cambió baja el
 -- catálogo completo (GET /sync). Sin tombstones ni revisión por artículo.
 --
+-- MODELO DE PRODUCTO (v2): el dato base es la DESCRIPCIÓN + el COSTO, y de ahí
+-- se derivan y se conservan TODOS los cálculos:
+--
+--   costo_iva = Lista 4 / (1 + inversaLista/100)        = Lista 4 / 1,50
+--   costo_neto = costo_iva / (1 + IVA/100)              = Lista 4 / (1,50 × 1,21)
+--   Lista n    = round(costo_neto × (1 + IVA/100) × factor_n)
+--
+-- Nada se descarta: costo_neto, costo_iva y las 4 listas viven en la fila.
+-- `categoria` y `fabrica` se persisten pero NO se envían en el sync.
+--
 -- Aplicar con:
 --   npx wrangler d1 execute lola-db --local  --file ./schema.sql   (dev)
 --   npx wrangler d1 execute lola-db --remote --file ./schema.sql   (producción)
@@ -23,36 +33,73 @@ CREATE TABLE IF NOT EXISTS metadata (
   updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- ── config: ajustes del operador (NO versionan el catálogo) ────────────────
+--   sync_mode : 'predeterminado' | 'descripcion-costos'
+--     · predeterminado     → GET /api/v1/sync/v2 responde { codigo_unico,
+--                            descripcion, precios[4], categoria, fabrica }
+--     · descripcion-costos → GET /api/v1/sync/v2 responde { descripcion, costo }
+--   GET /api/v1/sync (v1) NUNCA mira esta fila: es contrato congelado.
+CREATE TABLE IF NOT EXISTS config (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+INSERT INTO config (key, value) VALUES ('sync_mode', 'predeterminado')
+ON CONFLICT(key) DO NOTHING;
+
 -- ── products: catálogo activo ───────────────────────────────────────────────
 --   codigo_unico : CLAVE ÚNICA Y ESTABLE, generada por el import
 --                  (scripts/import-catalogo.ts + src/codigoUnico.ts), que es
 --                  la FUENTE DE VERDAD. Regla: abrev(marca) + modelo.
 --                  "BAKHOU 2000 LISO ALGODON HOMBRE" → "BAK2000".
---   precios      : JSON array de 4 números [L1, L2, L3, L4].
+--                  Sigue siendo la PK: es la identidad y el eje del hash.
 --   ⚠️  El "codigo" auto-generado del catalog.js (prefijo + contador) NO es
 --   identidad: cambia con el orden del Excel. Es solo un separador interno.
 CREATE TABLE IF NOT EXISTS products (
   codigo_unico TEXT PRIMARY KEY,
-  nombre       TEXT NOT NULL,
-  precios      TEXT NOT NULL,        -- JSON: [p1, p2, p3, p4]
+  descripcion  TEXT NOT NULL,
+  costo_neto   REAL NOT NULL DEFAULT 0,   -- sin IVA: Lista 4 / (1,50 × 1,21)
+  costo_iva    REAL NOT NULL DEFAULT 0,   -- costo + IVA: Lista 4 / 1,50
+  lista1       REAL NOT NULL DEFAULT 0,
+  lista2       REAL NOT NULL DEFAULT 0,
+  lista3       REAL NOT NULL DEFAULT 0,
+  lista4       REAL NOT NULL DEFAULT 0,
+  categoria    TEXT NOT NULL DEFAULT '',  -- se guarda, NO se sincroniza
+  fabrica      TEXT NOT NULL DEFAULT '',  -- se guarda, NO se sincroniza
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- ── Backups rotativos (2 versiones anteriores del catálogo) ─────────────────
---   Idénticas a products. Antes de cada wipe, el worker copia el catálogo
---   activo al backup más viejo (según metadata.backup_state). Sirven para
---   deshacer un upload equivocado vía POST /api/v1/admin/rollback.
+--   Mismo esquema que products (10 columnas). Antes de cada wipe, el worker
+--   copia el catálogo activo al backup más viejo (según
+--   metadata.backup_state). Sirven para deshacer un upload equivocado vía
+--   POST /api/v1/admin/rollback.
 CREATE TABLE IF NOT EXISTS products_bak (
   codigo_unico TEXT PRIMARY KEY,
-  nombre       TEXT NOT NULL,
-  precios      TEXT NOT NULL,
+  descripcion  TEXT NOT NULL,
+  costo_neto   REAL NOT NULL DEFAULT 0,
+  costo_iva    REAL NOT NULL DEFAULT 0,
+  lista1       REAL NOT NULL DEFAULT 0,
+  lista2       REAL NOT NULL DEFAULT 0,
+  lista3       REAL NOT NULL DEFAULT 0,
+  lista4       REAL NOT NULL DEFAULT 0,
+  categoria    TEXT NOT NULL DEFAULT '',
+  fabrica      TEXT NOT NULL DEFAULT '',
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS products_bak2 (
   codigo_unico TEXT PRIMARY KEY,
-  nombre       TEXT NOT NULL,
-  precios      TEXT NOT NULL,
+  descripcion  TEXT NOT NULL,
+  costo_neto   REAL NOT NULL DEFAULT 0,
+  costo_iva    REAL NOT NULL DEFAULT 0,
+  lista1       REAL NOT NULL DEFAULT 0,
+  lista2       REAL NOT NULL DEFAULT 0,
+  lista3       REAL NOT NULL DEFAULT 0,
+  lista4       REAL NOT NULL DEFAULT 0,
+  categoria    TEXT NOT NULL DEFAULT '',
+  fabrica      TEXT NOT NULL DEFAULT '',
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -71,6 +118,8 @@ CREATE TABLE IF NOT EXISTS auth (
 --   PENDIENTE de poblar: el seed inicial saldrá de los "tipos" del diccionario
 --   de sde11 (BOMBACHA, BODY, CORPIÑO, PACKS…) y la curación se hará en la
 --   web. La tabla queda reservada para no sufrir migraciones después.
+--   products.categoria es un texto libre de momento; esta jerarquía es el
+--   destino cuando se pueble la taxonomía.
 CREATE TABLE IF NOT EXISTS categorias (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   nombre     TEXT NOT NULL UNIQUE,

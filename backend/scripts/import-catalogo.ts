@@ -18,6 +18,8 @@
 //   --col-nombre=N      (default 0)
 //   --col-precio=N      (default 1)
 //   --col-codigo=N      (default -1 = auto; columna de código opcional)
+//   --col-categoria=N   (default -1 = no hay; queda vacía)
+//   --col-fabrica=N     (default -1 = no hay; queda vacía)
 //   --skip=N            (default 1 = fila de encabezados; 0 si no hay)
 //   --marcas=archivo.json   lista de marcas (nombres de carpeta) para
 //                           códigos más limpios
@@ -55,6 +57,8 @@ const OPTS: OpcionesImport = {
   colNombre: Number(flag('col-nombre', '0')),
   colPrecio: Number(flag('col-precio', '1')),
   colCodigo: Number(flag('col-codigo', '-1')),
+  colCategoria: Number(flag('col-categoria', '-1')),
+  colFabrica: Number(flag('col-fabrica', '-1')),
   skip: Number(flag('skip', '1')),
   iva: Number(flag('iva', '21')),
   inversaIva: Number(flag('inversa-iva', '21')),

@@ -5,17 +5,23 @@
 //   - scripts/import-catalogo.ts  (CLI: dry-run, archivos locales, upload)
 //   - Worker POST /api/v1/admin/import  (la web pages/ manda las filas acá)
 //
-// De esta forma el parseo del Excel, el cálculo de las 4 listas y la generación
-// de `codigo_unico` viven en UNA sola implementación: no hay ambigüedad entre
-// la web y el CLI. (La regla de códigos está en src/codigoUnico.ts.)
+// De esta forma el parseo del Excel, el cálculo de costos y las 4 listas y la
+// generación de `codigo_unico` viven en UNA sola implementación: no hay
+// ambigüedad entre la web y el CLI. (La regla de códigos está en
+// src/codigoUnico.ts; la fórmula de precios está en src/modelo.ts.)
 // ============================================================================
 
 import { asignarCodigos, nombreNormalizado, partir } from './codigoUnico';
+import { calcularCostos, cfgDesde, PRECIOS_DEFAULT, type PreciosCfg, type Producto } from './modelo';
 
 export interface OpcionesImport {
   colNombre?: number;
   colPrecio?: number;
   colCodigo?: number;
+  /** Columna de categoría (opcional). -1 / ausente = vacío. */
+  colCategoria?: number;
+  /** Columna de fábrica (opcional). -1 / ausente = vacío. */
+  colFabrica?: number;
   skip?: number;
   marcas?: string[];
   iva?: number;
@@ -25,11 +31,8 @@ export interface OpcionesImport {
   ofertaKeywords?: string[];
 }
 
-export interface ProductoImport {
-  codigo_unico: string;
-  nombre: string;
-  precios: number[];
-}
+/** El modelo completo: nada se descarta (costos + listas + categoria/fabrica). */
+export type ProductoImport = Producto;
 
 export interface EntradaMapa {
   codigo_unico: string;
@@ -45,23 +48,24 @@ export interface ResultadoImport {
   colisiones: number;
 }
 
-const DEFAULT_LISTAS = [2.32, 2.12, 1.65, 1.5];
 const DEFAULT_OFERTA = ['oferta', 'liq'];
 
-/** Filtros y regla de precios espejo del generador Python (sde7). */
+/** Filtros y regla de precios espejo del generador de la página. */
 export function importCatalogo(filas: unknown[][], opts: OpcionesImport = {}): ResultadoImport {
   const colNombre = opts.colNombre ?? 0;
   const colPrecio = opts.colPrecio ?? 1;
   const colCodigo = opts.colCodigo ?? -1;
+  const colCategoria = opts.colCategoria ?? -1;
+  const colFabrica = opts.colFabrica ?? -1;
   const skip = opts.skip ?? 1;
-  const iva = opts.iva ?? 21;
-  const inversaIva = opts.inversaIva ?? 21;
-  const inversaLista = opts.inversaLista ?? 50;
-  const listas = opts.listas ?? DEFAULT_LISTAS;
   const ofertaKeywords = opts.ofertaKeywords ?? DEFAULT_OFERTA;
 
-  const ivaF = 1 + iva / 100;
-  const lista4Factor = (1 + inversaIva / 100) * (1 + inversaLista / 100); // 1.21 * 1.50
+  const cfg: PreciosCfg = cfgDesde({
+    iva: opts.iva,
+    inversaIva: opts.inversaIva,
+    inversaLista: opts.inversaLista,
+    listas: opts.listas ?? PRECIOS_DEFAULT.listas,
+  });
 
   function esOferta(nombre: string): boolean {
     const n = nombre.trim();
@@ -70,13 +74,17 @@ export function importCatalogo(filas: unknown[][], opts: OpcionesImport = {}): R
     return ofertaKeywords.some((kw) => low.endsWith(kw));
   }
 
-  function calcularPrecios(precioLista4: number): number[] {
-    const costo = precioLista4 / lista4Factor;
-    return listas.map((f) => Math.round(costo * ivaF * f));
+  /** Columna opcional: -1 o vacío → ''. */
+  function leerTexto(row: unknown[], col: number): string {
+    if (col < 0) return '';
+    const v = row[col];
+    if (v === undefined || v === null) return '';
+    const s = String(v).trim();
+    return s.toLowerCase() === 'none' ? '' : s;
   }
 
   // ── Parseo de filas ──
-  const filasOk: Array<{ nombre: string; precio: number; codigoExcel: string }> = [];
+  const filasOk: Array<{ nombre: string; precio: number; codigoExcel: string; categoria: string; fabrica: string }> = [];
   const rechazadas: Array<{ fila: number; motivo: string }> = [];
   for (let i = skip; i < filas.length; i++) {
     const row = filas[i];
@@ -105,7 +113,13 @@ export function importCatalogo(filas: unknown[][], opts: OpcionesImport = {}): R
         codigoExcel = Number.isNaN(Number(raw)) ? raw : String(Math.trunc(Number(raw)));
       }
     }
-    filasOk.push({ nombre, precio, codigoExcel });
+    filasOk.push({
+      nombre,
+      precio,
+      codigoExcel,
+      categoria: leerTexto(row, colCategoria),
+      fabrica: leerTexto(row, colFabrica),
+    });
   }
 
   // ── Dedup por nombre normalizado ──
@@ -126,12 +140,18 @@ export function importCatalogo(filas: unknown[][], opts: OpcionesImport = {}): R
 
   const productos: ProductoImport[] = [];
   for (const f of unicas) {
+    // Regla uniforme: la L4 del Excel (o el precio de oferta) entra a la
+    // fórmula y de ahí salen costo_iva, costo_neto y las 4 listas.
+    const c = calcularCostos(f.precio, cfg);
+    const precios = esOferta(f.nombre) ? Array(4).fill(Math.round(f.precio)) : c.precios;
     productos.push({
       codigo_unico: codigos.get(nombreNormalizado(f.nombre))!,
-      nombre: f.nombre,
-      precios: esOferta(f.nombre)
-        ? Array(4).fill(Math.round(f.precio))
-        : calcularPrecios(f.precio),
+      descripcion: f.nombre,
+      costo_neto: c.costo_neto,
+      costo_iva: c.costo_iva,
+      precios,
+      categoria: f.categoria,
+      fabrica: f.fabrica,
     });
   }
 

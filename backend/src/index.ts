@@ -4,25 +4,42 @@
 // Sync por HASH (catálogo completo):
 //   GET  /api/v1/version       → { revision, hash }
 //   GET  /api/v1/sync          → { revision, hash, products: TODO el catálogo }
+//                                ⚠️  CONTRATO CONGELADO. Los campos son
+//                                { codigo_unico, nombre, precios[4] } y así
+//                                quedan las apps viejas. No se toca.
+//   GET  /api/v1/sync/v2       → contrato NUEVO. La forma depende de
+//                                config.sync_mode:
+//                                  · predeterminado     → { codigo_unico,
+//                                    descripcion, precios[4], categoria, fabrica }
+//                                  · descripcion-costos → { descripcion, costo }
+//                                (costo = costo_neto; sin listas, sin costo+IVA,
+//                                 sin categoría, sin fábrica)
+//   GET  /api/v1/sync-config   → { modo }
 //   GET  /api/v1/mapa-catalogo → { revision, hash, productos } (editor de fotos)
 //
 // Admin (JWT):
 //   POST   /api/v1/auth/login | change-password
-//   POST   /api/v1/admin/products  { products, replace } → upsert o reemplazo
-//   POST   /api/v1/admin/import    { filas } → importCatalogo → reemplazo
-//   POST   /api/v1/admin/rollback  { backup: 'bak'|'bak2' } → restaura backup
+//   POST   /api/v1/admin/products    { products, replace } → upsert o reemplazo
+//   POST   /api/v1/admin/import      { filas } → importCatalogo → reemplazo
+//   POST   /api/v1/admin/rollback    { backup: 'bak'|'bak2' } → restaura backup
+//   POST   /api/v1/admin/sync-config { modo } → 'predeterminado'|'descripcion-costos'
 //   DELETE /api/v1/admin/products/:codigo_unico
 //   POST   /api/v1/admin/rehash
 //
 // El reemplazo (replace: true) es atómico (un solo db.batch): copia el catálogo
 // activo al backup rotativo más viejo → borra products → inserta el nuevo →
 // sube revisión + hash. Si algo falla, todo revierte (no se pierde el backup).
+//
+// LÍMITE D1 que manda el tamaño de los INSERT multi-fila:
+//   "Maximum bound parameters per query = 100" → con 10 columnas por fila van
+//   10 filas por statement (10 × 10 = 100). No subir.
 // ============================================================================
 
 import { bearerToken, generateSalt, hashPassword, safeEqual, signJwt, verifyJwt, verifyPassword } from './auth';
 import { computeCatalogHash, type ProductRef } from './hash';
 import { partir } from './codigoUnico';
 import { importCatalogo } from './importCatalogo';
+import { derivarCostos, listasDe, PRECIOS_DEFAULT, type Producto } from './modelo';
 
 export interface Env {
   DB: D1Database;
@@ -31,11 +48,18 @@ export interface Env {
   JWT_SECRET?: string;     // clave de firma del JWT (wrangler secret put JWT_SECRET)
 }
 
-interface Product extends ProductRef {}
+type Product = Producto;
 
 const TOKEN_TTL_SEC = 24 * 60 * 60; // 24 horas
 const BATCH_LIMIT = 100;            // D1 limita los batches a 100 statements
+const INSERT_CHUNK = 10;            // 10 filas × 10 columnas = 100 params (techo D1)
 const BAK = ['products_bak', 'products_bak2'] as const;
+
+const PRODUCT_COLS = 'codigo_unico, descripcion, costo_neto, costo_iva, lista1, lista2, lista3, lista4, categoria, fabrica';
+const LIST_COLS = '(codigo_unico, descripcion, costo_neto, costo_iva, lista1, lista2, lista3, lista4, categoria, fabrica)';
+
+export type SyncMode = 'predeterminado' | 'descripcion-costos';
+const SYNC_MODES: SyncMode[] = ['predeterminado', 'descripcion-costos'];
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -65,6 +89,19 @@ interface Meta {
   newest: 'bak' | 'bak2';
 }
 
+interface RowProducto {
+  codigo_unico: string;
+  descripcion: string;
+  costo_neto: number;
+  costo_iva: number;
+  lista1: number;
+  lista2: number;
+  lista3: number;
+  lista4: number;
+  categoria: string;
+  fabrica: string;
+}
+
 async function getMetadata(db: D1Database): Promise<Meta> {
   const row = await db
     .prepare('SELECT revision_number, catalog_hash, backup_state FROM metadata WHERE key = \'catalog\'')
@@ -84,34 +121,85 @@ const metaUpdate = (db: D1Database, revision: number, hash: string, backup_state
     .prepare("UPDATE metadata SET revision_number = ?, catalog_hash = ?, backup_state = ?, updated_at = datetime('now') WHERE key = 'catalog'")
     .bind(revision, hash, backup_state);
 
-const rowToRef = (r: { codigo_unico: string; nombre: string; precios: string }): ProductRef => ({
+/** Fila D1 → DTO. `descripcion` es el `nombre` de siempre; listas de columna a array. */
+const rowToProduct = (r: RowProducto): Product => ({
   codigo_unico: r.codigo_unico,
-  nombre: r.nombre,
-  precios: JSON.parse(r.precios) as number[],
+  descripcion: r.descripcion,
+  costo_neto: r.costo_neto,
+  costo_iva: r.costo_iva,
+  precios: listasDe(r),
+  categoria: r.categoria ?? '',
+  fabrica: r.fabrica ?? '',
+});
+
+/**
+ * DTO → ProductRef para el hash canónico.
+ * ⚠️  La forma canónica es { codigo_unico, nombre, precios } y está CONGELADA:
+ * hay un port exacto en Android (CatalogHash.kt) con golden tests. Renombrar
+ * acá rompe la integridad de todas las apps viejas.
+ */
+const toRef = (p: Product): ProductRef => ({
+  codigo_unico: p.codigo_unico,
+  nombre: p.descripcion,
+  precios: p.precios.map((n) => Math.round(Number(n))),
 });
 
 async function recomputeHash(db: D1Database): Promise<string> {
-  const res = await db
-    .prepare('SELECT codigo_unico, nombre, precios FROM products ORDER BY codigo_unico')
-    .all<{ codigo_unico: string; nombre: string; precios: string }>();
-  const hash = await computeCatalogHash((res.results ?? []).map(rowToRef));
+  const res = await db.prepare(`SELECT ${PRODUCT_COLS} FROM products ORDER BY codigo_unico`).all<RowProducto>();
+  const hash = await computeCatalogHash((res.results ?? []).map(rowToProduct).map(toRef));
   await db.prepare("UPDATE metadata SET catalog_hash = ? WHERE key = 'catalog'").bind(hash).run();
   return hash;
 }
 
-/** Genera statements INSERT multi-fila (una por ~100 filas). */
+/** Genera statements INSERT multi-fila (10 filas por statement = 100 params). */
 function multiInsert(db: D1Database, table: string, products: Product[]): D1PreparedStatement[] {
   const stmts: D1PreparedStatement[] = [];
-  for (let i = 0; i < products.length; i += BATCH_LIMIT) {
-    const slice = products.slice(i, i + BATCH_LIMIT);
-    const placeholders = slice.map(() => '(?, ?, ?)').join(', ');
-    const values: string[] = [];
-    for (const p of slice) values.push(p.codigo_unico, p.nombre, JSON.stringify(p.precios));
+  const placeholders = `(${new Array(10).fill('?').join(', ')})`;
+  for (let i = 0; i < products.length; i += INSERT_CHUNK) {
+    const slice = products.slice(i, i + INSERT_CHUNK);
+    const values: Array<string | number> = [];
+    for (const p of slice) {
+      const l = p.precios;
+      values.push(
+        p.codigo_unico,
+        p.descripcion,
+        p.costo_neto,
+        p.costo_iva,
+        Number(l[0]) || 0,
+        Number(l[1]) || 0,
+        Number(l[2]) || 0,
+        Number(l[3]) || 0,
+        p.categoria || '',
+        p.fabrica || '',
+      );
+    }
     stmts.push(
-      db.prepare(`INSERT INTO ${table} (codigo_unico, nombre, precios) VALUES ${placeholders}`).bind(...values),
+      db.prepare(`INSERT INTO ${table} ${LIST_COLS} VALUES ${slice.map(() => placeholders).join(', ')}`).bind(...values),
     );
   }
   return stmts;
+}
+
+// ── Config del operador (sync_mode) ──────────────────────────────────────────
+
+/** Modo de sync del contrato v2. Si la tabla no existe todavía → predeterminado. */
+async function getSyncMode(db: D1Database): Promise<SyncMode> {
+  try {
+    const row = await db.prepare("SELECT value FROM config WHERE key = 'sync_mode'").first<{ value: string }>();
+    return row && (SYNC_MODES as string[]).includes(row.value) ? (row.value as SyncMode) : 'predeterminado';
+  } catch {
+    return 'predeterminado';
+  }
+}
+
+async function setSyncMode(db: D1Database, modo: SyncMode): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO config (key, value) VALUES ('sync_mode', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+    )
+    .bind(modo)
+    .run();
 }
 
 // ── Autenticación ────────────────────────────────────────────────────────────
@@ -190,17 +278,16 @@ async function requireAdmin(request: Request, env: Env): Promise<{ ok: boolean; 
 async function replaceCatalog(db: D1Database, products: Product[]) {
   const meta = await getMetadata(db);
   const newRevision = meta.revision + 1;
-  const hash = await computeCatalogHash(products);
+  const hash = await computeCatalogHash(products.map(toRef));
 
-  // Backup: copiar el catálogo activo al slot más viejo.
+  // Backup: copia el catálogo activo al slot más viejo.
   const target = meta.newest === 'bak' ? 'bak2' : 'bak';
   const nuevoState = JSON.stringify({ newest: target });
+  const bakTable = BAK[target === 'bak' ? 0 : 1];
 
   const batch: D1PreparedStatement[] = [
-    db.prepare(`DELETE FROM ${BAK[target === 'bak' ? 0 : 1]}`),
-    db.prepare(
-      `INSERT INTO ${BAK[target === 'bak' ? 0 : 1]} (codigo_unico, nombre, precios) SELECT codigo_unico, nombre, precios FROM products`,
-    ),
+    db.prepare(`DELETE FROM ${bakTable}`),
+    db.prepare(`INSERT INTO ${bakTable} ${LIST_COLS} SELECT ${PRODUCT_COLS} FROM products`),
     db.prepare('DELETE FROM products'),
     ...multiInsert(db, 'products', products),
     metaUpdate(db, newRevision, hash, nuevoState),
@@ -214,27 +301,44 @@ async function upsertProducts(db: D1Database, products: Product[]) {
   const meta = await getMetadata(db);
   const newRevision = meta.revision + 1;
 
-  const res = await db
-    .prepare('SELECT codigo_unico, nombre, precios FROM products')
-    .all<{ codigo_unico: string; nombre: string; precios: string }>();
-  const mapa = new Map<string, ProductRef>((res.results ?? []).map((r) => [r.codigo_unico, rowToRef(r)]));
+  const res = await db.prepare(`SELECT ${PRODUCT_COLS} FROM products`).all<RowProducto>();
+  const mapa = new Map<string, Product>((res.results ?? []).map((r) => [r.codigo_unico, rowToProduct(r)]));
   for (const p of products) mapa.set(p.codigo_unico, p);
-  const hash = await computeCatalogHash([...mapa.values()]);
+  const hash = await computeCatalogHash([...mapa.values()].map(toRef));
 
   const batch: D1PreparedStatement[] = [
     metaUpdate(db, newRevision, hash, JSON.stringify({ newest: meta.newest })),
   ];
   for (const p of products) {
+    const l = p.precios;
     batch.push(
       db
         .prepare(
-          `INSERT INTO products (codigo_unico, nombre, precios) VALUES (?, ?, ?)
+          `INSERT INTO products ${LIST_COLS} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(codigo_unico) DO UPDATE SET
-             nombre = excluded.nombre,
-             precios = excluded.precios,
+             descripcion = excluded.descripcion,
+             costo_neto = excluded.costo_neto,
+             costo_iva = excluded.costo_iva,
+             lista1 = excluded.lista1,
+             lista2 = excluded.lista2,
+             lista3 = excluded.lista3,
+             lista4 = excluded.lista4,
+             categoria = excluded.categoria,
+             fabrica = excluded.fabrica,
              updated_at = datetime('now')`,
         )
-        .bind(p.codigo_unico, p.nombre, JSON.stringify(p.precios)),
+        .bind(
+          p.codigo_unico,
+          p.descripcion,
+          p.costo_neto,
+          p.costo_iva,
+          Number(l[0]) || 0,
+          Number(l[1]) || 0,
+          Number(l[2]) || 0,
+          Number(l[3]) || 0,
+          p.categoria || '',
+          p.fabrica || '',
+        ),
     );
   }
   await runBatch(db, batch);
@@ -246,10 +350,10 @@ async function adminDeleteProduct(db: D1Database, codigoUnico: string) {
   const newRevision = meta.revision + 1;
 
   const res = await db
-    .prepare('SELECT codigo_unico, nombre, precios FROM products WHERE codigo_unico != ?')
+    .prepare(`SELECT ${PRODUCT_COLS} FROM products WHERE codigo_unico != ?`)
     .bind(codigoUnico)
-    .all<{ codigo_unico: string; nombre: string; precios: string }>();
-  const hash = await computeCatalogHash((res.results ?? []).map(rowToRef));
+    .all<RowProducto>();
+  const hash = await computeCatalogHash((res.results ?? []).map(rowToProduct).map(toRef));
 
   await runBatch(db, [
     metaUpdate(db, newRevision, hash, JSON.stringify({ newest: meta.newest })),
@@ -268,21 +372,15 @@ async function rollbackCatalog(db: D1Database, backup: 'bak' | 'bak2') {
   const newRevision = meta.revision + 1;
 
   // Hash del catálogo que vamos a restaurar (antes del batch).
-  const res = await db
-    .prepare(`SELECT codigo_unico, nombre, precios FROM ${chosenTable}`)
-    .all<{ codigo_unico: string; nombre: string; precios: string }>();
-  const hash = await computeCatalogHash((res.results ?? []).map(rowToRef));
+  const res = await db.prepare(`SELECT ${PRODUCT_COLS} FROM ${chosenTable}`).all<RowProducto>();
+  const hash = await computeCatalogHash((res.results ?? []).map(rowToProduct).map(toRef));
 
   await runBatch(db, [
     // Guardar el catálogo actual (pre-rollback) en el otro slot.
     db.prepare(`DELETE FROM ${otherTable}`),
-    db.prepare(
-      `INSERT INTO ${otherTable} (codigo_unico, nombre, precios) SELECT codigo_unico, nombre, precios FROM products`,
-    ),
+    db.prepare(`INSERT INTO ${otherTable} ${LIST_COLS} SELECT ${PRODUCT_COLS} FROM products`),
     db.prepare('DELETE FROM products'),
-    db.prepare(
-      `INSERT INTO products (codigo_unico, nombre, precios) SELECT codigo_unico, nombre, precios FROM ${chosenTable}`,
-    ),
+    db.prepare(`INSERT INTO products ${LIST_COLS} SELECT ${PRODUCT_COLS} FROM ${chosenTable}`),
     metaUpdate(db, newRevision, hash, JSON.stringify({ newest: other })),
   ]);
   return { revision: newRevision, hash, restaurado: chosen };
@@ -290,30 +388,83 @@ async function rollbackCatalog(db: D1Database, backup: 'bak' | 'bak2') {
 
 // ── Endpoints ────────────────────────────────────────────────────────────────
 
-/** GET /api/v1/sync — catálogo completo (los clientes comparan hash y reemplazan). */
+/**
+ * GET /api/v1/sync — CONTRATO CONGELADO.
+ * Los clientes viejos comparan hash y reemplazan. Los campos se siguen
+ * llamando `nombre` y `precios`: así quedan, byte por byte.
+ */
 async function handleSync(db: D1Database) {
   const meta = await getMetadata(db);
-  const res = await db
-    .prepare('SELECT codigo_unico, nombre, precios FROM products ORDER BY codigo_unico')
-    .all<{ codigo_unico: string; nombre: string; precios: string }>();
+  const res = await db.prepare(`SELECT ${PRODUCT_COLS} FROM products ORDER BY codigo_unico`).all<RowProducto>();
   const products = (res.results ?? []).map((r) => ({
     codigo_unico: r.codigo_unico,
-    nombre: r.nombre,
-    precios: JSON.parse(r.precios) as number[],
+    nombre: r.descripcion,
+    precios: listasDe(r).map((n) => Math.round(n)),
   }));
   return json({ revision: meta.revision, hash: meta.hash, products });
+}
+
+/**
+ * GET /api/v1/sync/v2 — contrato nuevo, la forma la decide config.sync_mode.
+ * El envelope (revision + hash) es igual al v1: el hash sigue siendo el
+ * canónico del catálogo completo, así cualquier cliente puede comparar.
+ */
+async function handleSyncV2(db: D1Database) {
+  const meta = await getMetadata(db);
+  const modo = await getSyncMode(db);
+  const res = await db.prepare(`SELECT ${PRODUCT_COLS} FROM products ORDER BY codigo_unico`).all<RowProducto>();
+
+  if (modo === 'descripcion-costos') {
+    // Únicamente { descripcion, costo }. Sin listas, sin costo+IVA,
+    // sin categoría, sin fábrica.
+    const products = (res.results ?? []).map((r) => ({
+      descripcion: r.descripcion,
+      costo: r.costo_neto,
+    }));
+    return json({ revision: meta.revision, hash: meta.hash, format: modo, products });
+  }
+
+  const products = (res.results ?? []).map((r) => ({
+    codigo_unico: r.codigo_unico,
+    descripcion: r.descripcion,
+    precios: listasDe(r).map((n) => Math.round(n)),
+    categoria: r.categoria ?? '',
+    fabrica: r.fabrica ?? '',
+  }));
+  return json({ revision: meta.revision, hash: meta.hash, format: modo, products });
+}
+
+/** GET /api/v1/sync-config → { modo }. Lectura libre: es solo un formato. */
+async function handleSyncConfig(db: D1Database) {
+  return json({ modo: await getSyncMode(db), opciones: SYNC_MODES });
+}
+
+/** POST /api/v1/admin/sync-config { modo } → { modo } (admin). */
+async function handleSyncConfigWrite(request: Request, db: D1Database): Promise<Response> {
+  let body: { modo?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return err('Body inválido', 400);
+  }
+  const modo = body?.modo;
+  if (typeof modo !== 'string' || !(SYNC_MODES as string[]).includes(modo)) {
+    return err(`\`modo\` debe ser uno de: ${SYNC_MODES.join(', ')}`, 400);
+  }
+  await setSyncMode(db, modo as SyncMode);
+  return json({ modo });
 }
 
 /** GET /api/v1/mapa-catalogo — para el editor de fotos (sde11). */
 async function handleMapa(db: D1Database) {
   const meta = await getMetadata(db);
   const res = await db
-    .prepare('SELECT codigo_unico, nombre FROM products ORDER BY codigo_unico')
-    .all<{ codigo_unico: string; nombre: string }>();
+    .prepare('SELECT codigo_unico, descripcion FROM products ORDER BY codigo_unico')
+    .all<{ codigo_unico: string; descripcion: string }>();
   const productos = (res.results ?? []).map((r) => ({
     codigo_unico: r.codigo_unico,
-    nombre: r.nombre,
-    modelo: partir(r.nombre).codigo || null,
+    nombre: r.descripcion,
+    modelo: partir(r.descripcion).codigo || null,
   }));
   return json({ revision: meta.revision, hash: meta.hash, productos });
 }
@@ -335,6 +486,8 @@ async function handleImport(request: Request, env: Env): Promise<Response> {
     colNombre: typeof body.colNombre === 'number' ? body.colNombre : undefined,
     colPrecio: typeof body.colPrecio === 'number' ? body.colPrecio : undefined,
     colCodigo: typeof body.colCodigo === 'number' ? body.colCodigo : undefined,
+    colCategoria: typeof body.colCategoria === 'number' ? body.colCategoria : undefined,
+    colFabrica: typeof body.colFabrica === 'number' ? body.colFabrica : undefined,
     skip: typeof body.skip === 'number' ? body.skip : undefined,
     marcas: Array.isArray(body.marcas) ? (body.marcas as string[]) : undefined,
   });
@@ -356,6 +509,16 @@ async function handleImport(request: Request, env: Env): Promise<Response> {
 
 // ── Validación de entrada (admin) ────────────────────────────────────────────
 
+/**
+ * Acepta DOS formas y las normaliza al modelo completo:
+ *   · NUEVA  : { codigo_unico, descripcion, costo_neto?, costo_iva?,
+ *               precios[4] | lista1..lista4, categoria?, fabrica? }
+ *   · VIEJA  : { codigo_unico, nombre, precios[4] }   ← el shape de siempre
+ *
+ * Si no vienen los costos se DERIVAN de la L4 con los defaults (21 / 50), así
+ * un cliente viejo no deja columnas en 0. Si la página mandó los costos, se
+ * respetan tal cual.
+ */
 function normalizeProducts(body: unknown): Product[] {
   const list: unknown[] = Array.isArray(body)
     ? body
@@ -366,19 +529,42 @@ function normalizeProducts(body: unknown): Product[] {
   const vacio = list.length === 0 || (list.length === 1 && (!list[0] || typeof list[0] !== 'object'));
   if (vacio) throw new Error('Body vacío: enviá un producto, un array o { products: [...] }');
 
-  return list.map((p) => {
-    if (!p || typeof (p as any).codigo_unico !== 'string' || !(p as any).codigo_unico.trim())
-      throw new Error('codigo_unico inválido');
-    if (typeof (p as any).nombre !== 'string' || !(p as any).nombre.trim())
-      throw new Error('nombre inválido');
-    if (!Array.isArray((p as any).precios) || (p as any).precios.length === 0)
-      throw new Error('precios inválido');
-    const precios = (p as any).precios.map((n: unknown) => Math.round(Number(n)));
-    if (precios.some((n: number) => Number.isNaN(n))) throw new Error('precios inválido');
+  return list.map((raw) => {
+    const p = raw as Record<string, unknown>;
+    if (typeof p.codigo_unico !== 'string' || !p.codigo_unico.trim()) throw new Error('codigo_unico inválido');
+
+    const descripcion = typeof p.descripcion === 'string' && p.descripcion.trim()
+      ? p.descripcion.trim()
+      : typeof p.nombre === 'string' && p.nombre.trim()
+        ? p.nombre.trim()
+        : '';
+    if (!descripcion) throw new Error('descripcion (o nombre) inválido');
+
+    // Lista de precios: array `precios` o columnas `lista1..lista4`.
+    let precios: number[];
+    if (Array.isArray(p.precios)) {
+      if (p.precios.length !== 4) throw new Error('precios inválido: se esperan exactamente 4 listas [L1, L2, L3, L4]');
+      precios = p.precios.map((n) => Math.round(Number(n)));
+      if (precios.some((n) => !Number.isFinite(n))) throw new Error('precios inválido');
+    } else if (['lista1', 'lista2', 'lista3', 'lista4'].every((k) => typeof p[k] === 'number')) {
+      precios = ['lista1', 'lista2', 'lista3', 'lista4'].map((k) => Math.round(Number(p[k])));
+      if (precios.some((n) => !Number.isFinite(n))) throw new Error('lista1..lista4 inválido');
+    } else {
+      throw new Error('Faltan precios: mandá `precios` [L1..L4] o `lista1..lista4`');
+    }
+
+    const derivado = derivarCostos(precios, PRECIOS_DEFAULT);
+    const costo_neto = Number.isFinite(Number(p.costo_neto)) ? Number(p.costo_neto) : derivado.costo_neto;
+    const costo_iva = Number.isFinite(Number(p.costo_iva)) ? Number(p.costo_iva) : derivado.costo_iva;
+
     return {
-      codigo_unico: (p as any).codigo_unico.trim(),
-      nombre: (p as any).nombre.trim(),
+      codigo_unico: p.codigo_unico.trim(),
+      descripcion,
+      costo_neto,
+      costo_iva,
       precios,
+      categoria: typeof p.categoria === 'string' ? p.categoria.trim() : '',
+      fabrica: typeof p.fabrica === 'string' ? p.fabrica.trim() : '',
     };
   });
 }
@@ -398,7 +584,12 @@ export default {
       if (method === 'GET' && path === '/api/v1/version') {
         res = json(await getMetadata(env.DB));
       } else if (method === 'GET' && path === '/api/v1/sync') {
+        // CONTRATO CONGELADO — no agregar nada acá.
         res = await handleSync(env.DB);
+      } else if (method === 'GET' && path === '/api/v1/sync/v2') {
+        res = await handleSyncV2(env.DB);
+      } else if (method === 'GET' && path === '/api/v1/sync-config') {
+        res = await handleSyncConfig(env.DB);
       } else if (method === 'GET' && path === '/api/v1/mapa-catalogo') {
         res = await handleMapa(env.DB);
       } else if (method === 'POST' && path === '/api/v1/auth/login') {
@@ -424,6 +615,10 @@ export default {
         const auth = await requireAdmin(request, env);
         if (!auth.ok) res = err(auth.reason ?? 'No autorizado', 401);
         else res = await handleImport(request, env);
+      } else if (method === 'POST' && path === '/api/v1/admin/sync-config') {
+        const auth = await requireAdmin(request, env);
+        if (!auth.ok) res = err(auth.reason ?? 'No autorizado', 401);
+        else res = await handleSyncConfigWrite(request, env.DB);
       } else if (method === 'POST' && path === '/api/v1/admin/rollback') {
         const auth = await requireAdmin(request, env);
         if (!auth.ok) res = err(auth.reason ?? 'No autorizado', 401);
