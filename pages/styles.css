@@ -62,7 +62,7 @@ h1 { font-size: 22px; letter-spacing: -0.02em; }
 .field { display: block; margin-bottom: 12px; }
 .field > span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
 
-input[type="text"], input[type="password"], input[type="number"] {
+input[type="text"], input[type="password"], input[type="number"], select {
   width: 100%;
   background: var(--surface-2);
   color: var(--text);
@@ -70,13 +70,14 @@ input[type="text"], input[type="password"], input[type="number"] {
   border-radius: 9px;
   padding: 11px 13px;
   font-size: 14px;
+  font-family: inherit;
   transition: border-color var(--t), box-shadow var(--t);
 }
-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 168, 132, 0.18); }
+input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 168, 132, 0.18); }
 
 .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
 .cols .field { margin-bottom: 0; }
-.cols input { width: 100%; }
+.cols input, .cols select { width: 100%; }
 .hint { color: var(--muted); font-size: 12px; margin-top: 12px; line-height: 1.6; }
 .hint strong { color: var(--accent-2); }
 code { background: var(--surface-2); padding: 1px 6px; border-radius: 5px; }

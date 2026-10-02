@@ -8,16 +8,37 @@ el Excel (SheetJS), calcula las 4 listas y genera `codigo_unico` en el navegador
 ## Qué hace
 
 1. Elegís el Excel de precios (`.xlsx`/`.xls`).
-2. Configurás columnas (nombre, precio, código) y filas de header.
-3. **Generar catálogo** → parsea en el navegador, calcula las 4 listas y genera
-   `codigo_unico` (misma regla que el CLI: `abrev(marca) + modelo`).
-4. **Subir a la nube** → `POST /api/v1/admin/products` con `{ products, replace: true }`
-   → el Worker hace backup rotativo + borra + inserta, atómico.
+2. Configurás columnas (nombre, precio, código, categoría, fábrica) y filas de header.
+3. Ajustás **Configuración de precios**: IVA %, factor inverso de la L4 y los
+   factores de L1..L3 (persisten en `localStorage`; defaults 21 / 50 / 2,32 /
+   2,12 / 1,65).
+4. Elegís el **Modo de sync** (`predeterminado` o `descripcion-costos`) →
+   `POST /api/v1/admin/sync-config`; el worker lo guarda en `config` y queda
+   para `GET /api/v1/sync/v2`.
+5. **Generar catálogo** → parsea en el navegador, calcula costo neto, costo+IVA
+   y las 4 listas, y genera `codigo_unico` (misma regla que el CLI:
+   `abrev(marca) + modelo`).
+6. **Subir a la nube** → `POST /api/v1/admin/products` con
+   `{ products, replace: true }` → el Worker hace backup rotativo + borra +
+   inserta, atómico.
 
-La lógica de precios es un port 1:1 del generador Python:
-`costo = precioLista4 / (1.21 × 1.50)` → `lista_i = round(costo × 1.21 × factor)`.
-Oferta/liquidación (nombre termina en `.`, `oferta` o `liq`) → las 4 listas
-iguales al precio del Excel.
+La lógica de precios es un port 1:1 de `backend/src/modelo.ts`:
+
+```
+costo+IVA  = Lista 4 / (1 + inversa/100)          (inversa 50 → /1,50)
+costo neto = (costo + IVA) / (1 + IVA/100)        (IVA 21 → /1,21)
+Lista n    = round(costo neto × (1 + IVA/100) × factor_n)
+```
+
+IVA y factores vienen de la config (no están hardcodeados). Oferta/liquidación
+(nombre termina en `.`, `oferta` o `liq`) → las 4 listas iguales al precio del
+Excel.
+
+La vista previa muestra **todas las columnas del modelo** (Código, Descripción,
+Costo neto, Costo+IVA, L1..L4) y la subida manda el modelo completo
+(`codigo_unico`, `descripcion`, `costo_neto`, `costo_iva`, `precios`,
+`categoria`, `fabrica`) — el worker acepta también el shape viejo
+(`nombre` + `precios`) por compatibilidad.
 
 ## Una sola forma
 

@@ -67,9 +67,47 @@
           <label class="field">Col Nombre <input type="number" id="colNombre" value="1" min="0"></label>
           <label class="field">Col Precio <input type="number" id="colPrecio" value="2" min="0"></label>
           <label class="field">Col Código <input type="number" id="colCodigo" value="-1" min="-1"> <span class="hint">(-1 = auto)</span></label>
+          <label class="field">Col Categoría <input type="number" id="colCategoria" value="-1" min="-1"> <span class="hint">(-1 = vacía)</span></label>
+          <label class="field">Col Fábrica <input type="number" id="colFabrica" value="-1" min="-1"> <span class="hint">(-1 = vacía)</span></label>
           <label class="field">Filas header <input type="number" id="skipRows" value="0" min="0"></label>
         </div>
-        <p class="hint">Base 0 (A = 0). El Excel trae la <strong>Lista de precio 4</strong>; el resto de listas se calcula solo.</p>
+        <p class="hint">Base 0 (A = 0). El Excel trae la <strong>Lista de precio 4</strong>; el resto de listas se calcula solo. Categoría y fábrica se guardan en la base pero <strong>no se envían</strong> en el sync.</p>
+      </section>
+
+      <section class="block">
+        <h2 class="block-title">⚙️ Configuración de precios</h2>
+        <div class="cols">
+          <label class="field">IVA % <input type="number" id="cfgIva" step="0.01" min="0" value="21"></label>
+          <label class="field">Factor L4 (inversa) % <input type="number" id="cfgInversa" step="0.01" min="0" value="50"></label>
+          <label class="field">Factor L1 <input type="number" id="cfgL1" step="0.01" min="0" value="2.32"></label>
+          <label class="field">Factor L2 <input type="number" id="cfgL2" step="0.01" min="0" value="2.12"></label>
+          <label class="field">Factor L3 <input type="number" id="cfgL3" step="0.01" min="0" value="1.65"></label>
+        </div>
+        <p class="hint">
+          costo + IVA = Lista 4 / (1 + factor L4)&nbsp; · &nbsp;costo neto = (costo + IVA) / (1 + IVA)&nbsp; · &nbsp;
+          Lista n = round(costo neto × (1 + IVA) × factor Ln). El factor de la L4 se deriva solo (1 + inversa / 100).
+        </p>
+        <div class="actions">
+          <button id="cfgGuardar" class="btn secondary">💾 Guardar precios</button>
+          <button id="cfgReset" class="btn ghost">↺ Valores por defecto</button>
+        </div>
+        <span id="cfgStatus" class="status"></span>
+      </section>
+
+      <section class="block">
+        <h2 class="block-title">📡 Modo de sync</h2>
+        <label class="field">
+          <span>Formato de <code>/api/v1/sync/v2</code></span>
+          <select id="syncMode">
+            <option value="predeterminado">Predeterminado — { codigo_unico, descripcion, precios[], categoria, fabrica }</option>
+            <option value="descripcion-costos">Descripción-Costos — { descripcion, costo }</option>
+          </select>
+        </label>
+        <p class="hint"><code>/api/v1/sync</code> (v1) <strong>no cambia nunca</strong>: las apps viejas siguen recibiendo exactamente el JSON actual. El modo solo decide qué responde el contrato nuevo.</p>
+        <div class="actions">
+          <button id="syncGuardar" class="btn secondary">📡 Aplicar modo</button>
+        </div>
+        <span id="syncStatus" class="status"></span>
       </section>
 
       <div class="actions">
