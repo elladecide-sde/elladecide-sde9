@@ -67,7 +67,7 @@ ON CONFLICT(key) DO NOTHING;
 --   identidad: cambia con el orden del Excel. Es solo un separador interno.
 CREATE TABLE IF NOT EXISTS products (
   codigo_unico TEXT PRIMARY KEY,
-  fabrica      TEXT NOT NULL DEFAULT '',  -- se envía en v2 (predeterminado)
+  fabrica      TEXT NOT NULL DEFAULT 'SIN FABRICA', -- se envía en v2; NUNCA vacía (regla: todo artículo tiene fábrica)
   codigo       TEXT NOT NULL DEFAULT '',  -- código de fábrica/comercial ("404 / 425"), NO es identidad
   descripcion  TEXT NOT NULL,
   costo_neto   REAL NOT NULL DEFAULT 0,   -- sin IVA: Lista 4 / (1,50 × 1,21)
@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS products (
 --   POST /api/v1/admin/rollback.
 CREATE TABLE IF NOT EXISTS products_bak (
   codigo_unico TEXT PRIMARY KEY,
-  fabrica      TEXT NOT NULL DEFAULT '',
+  fabrica      TEXT NOT NULL DEFAULT 'SIN FABRICA',
   codigo       TEXT NOT NULL DEFAULT '',
   descripcion  TEXT NOT NULL,
   costo_neto   REAL NOT NULL DEFAULT 0,
@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS products_bak (
 
 CREATE TABLE IF NOT EXISTS products_bak2 (
   codigo_unico TEXT PRIMARY KEY,
-  fabrica      TEXT NOT NULL DEFAULT '',
+  fabrica      TEXT NOT NULL DEFAULT 'SIN FABRICA',
   codigo       TEXT NOT NULL DEFAULT '',
   descripcion  TEXT NOT NULL,
   costo_neto   REAL NOT NULL DEFAULT 0,

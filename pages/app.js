@@ -28,6 +28,9 @@ const $ = (id) => document.getElementById(id);
 const CFG_KEY = 'lola_precios_cfg';
 const CFG_DEFAULT = { iva: 21, inversaLista: 50, l1: 2.32, l2: 2.12, l3: 1.65 };
 const OFERTA_KEYWORDS = ['oferta', 'liq'];
+// Fábrica de respaldo (espejo de articleParser.js y del backend): ningún
+// artículo del catálogo queda sin fábrica.
+const SIN_FABRICA = 'SIN FABRICA';
 
 function cargarCfg() {
   try {
@@ -213,8 +216,9 @@ function procesarCatalogo(rows, colNombre, colPrecio, colCodigo, colCategoria, c
     // (termina en '.', 'oferta', 'liq') + marcas del parser (PROMO, REMATE…).
     const oferta = esOferta(f.nombre) || !!(pl && pl.oferta);
     // Fábrica/código: el Excel primero (dato fuente); si viene vacío, el parser.
-    // "SIN FABRICA" es un grupo, no una fábrica: no se persiste.
-    const fabParser = pl && pl.fabrica !== P.SIN_FABRICA ? pl.fabrica : '';
+    // "SIN FABRICA" es una fábrica MÁS: si ni el Excel ni el parser traen
+    // marca, se guarda esa — ningún artículo queda sin fábrica.
+    const fabParser = pl ? pl.fabrica : '';
     return {
       codigo_unico: codigos.get(LolaCodigo.nombreNormalizado(f.nombre)),
       descripcion: f.nombre, // descripción CRUDA: búsquedas y v1 intactos
@@ -222,7 +226,7 @@ function procesarCatalogo(rows, colNombre, colPrecio, colCodigo, colCategoria, c
       costo_iva: c.costo_iva,
       precios: oferta ? Array(4).fill(Math.round(f.precio)) : c.precios,
       categoria: f.categoria,
-      fabrica: f.fabrica || fabParser,
+      fabrica: f.fabrica || fabParser || SIN_FABRICA,
       codigo: f.codigoExcel || (pl ? pl.codigo : ''),
       oferta,
     };
@@ -910,10 +914,6 @@ function setEdStatus(msg, ok) {
 
 const edPrecios = () => [1, 2, 3, 4].map((i) => Number($(`edL${i}`).value));
 
-// "SIN FABRICA" es un GRUPO del parser (descripciones sin marca detectada),
-// no una fábrica: jamás se guarda como valor de `fabrica`.
-const esFabricaSintetica = (f) => String(f || '').trim().toUpperCase() === 'SIN FABRICA';
-
 // ── Costos en el modal: neto ⇄ IVA, editables, precisión completa ───────────
 // El INPUT muestra 2 decimales; la verdad vive en las variables (así un artículo
 // sin edición no se redondea al guardar). `edCostoManual` protege el costo
@@ -984,7 +984,7 @@ function abrirEdicion(p) {
   (p.precios || []).slice(0, 4).forEach((n, i) => { $(`edL${i + 1}`).value = n; });
   for (let i = (p.precios || []).length; i < 4; i++) $(`edL${i + 1}`).value = '';
   $('edCat').value = p.categoria || '';
-  $('edFab').value = esFabricaSintetica(p.fabrica) ? '' : (p.fabrica || '');
+  $('edFab').value = p.fabrica || SIN_FABRICA;
   $('edCodFab').value = p.codigo || '';
   $('edOferta').checked = !!p.oferta;
 
@@ -1221,8 +1221,8 @@ async function analizarInventario() {
     stats.innerHTML = '';
     for (const t of [
       `${total} filas`,
-      `${conFabrica} con fábrica`,
-      `${total - conFabrica} sin fábrica`,
+      `${conFabrica} con fábrica detectada`,
+      `${total - conFabrica} sin marca → se guarda SIN FABRICA`,
       `${ofertas} ofertas`,
       `${aRevisar} a revisar`,
     ]) {
@@ -1245,7 +1245,7 @@ async function analizarInventario() {
       const x = payload[i];
       const fabCargada = (p.fabrica || '').trim();
       const codCargado = (p.codigo || '').trim();
-      const faltaFabrica = !fabCargada && !it.sinFabrica; // grupo SIN FABRICA no entra
+      const faltaFabrica = !fabCargada; // SIN FABRICA es una fábrica válida: se completa igual
       const faltaCodigo = !codCargado && !!x.codigo;
       if (!faltaFabrica && !faltaCodigo) return;
       const precios = (p.precios || []).map((n) => Math.round(Number(n)));
@@ -1265,7 +1265,7 @@ async function analizarInventario() {
           descripcion: p.descripcion,
           precios: finales,
           categoria: p.categoria || '',
-          fabrica: fabCargada || (it.sinFabrica ? '' : it.fabrica),
+          fabrica: fabCargada || it.fabrica,
           codigo: codCargado || x.codigo,
           oferta,
           costo_neto: conCosto ? netoGuardado : c.costo_neto,
@@ -1308,6 +1308,7 @@ $('adminAplicar').addEventListener('click', async () => {
   const seguro = confirm(
     `¿Completar ${n} artículos del catálogo?\n\n` +
     '· Se completan fábricas y códigos que faltan (los ya cargados no se tocan).\n' +
+    '· Sin marca detectada → se guarda SIN FABRICA: ningún artículo queda sin fábrica.\n' +
     '· Las ofertas detectadas igualan las 4 listas a la L4 (la oferta manda los precios).\n' +
     (dudas ? `· ${dudas} tienen confianza baja (⚠️ en la tabla).\n` : '') +
     '· Los costos ya guardados se conservan; si faltan, se derivan de la L4 con la configuración actual.\n\n' +

@@ -118,3 +118,12 @@ export const listasDe = (r: { lista1: number; lista2: number; lista3: number; li
   r.lista3,
   r.lista4,
 ];
+
+// ── Fábrica de respaldo ─────────────────────────────────────────────────────
+// "SIN FABRICA" es una fábrica MÁS (espejo de pages/articleParser.js): si ni
+// el Excel ni el parser traen marca, el producto se guarda con este valor.
+// REGLA DE NEGOCIO: ningún artículo del catálogo queda sin fábrica.
+export const SIN_FABRICA = 'SIN FABRICA';
+
+/** Normaliza la fábrica ANTES de persistirla: vacía o en blanco → SIN_FABRICA. */
+export const fabPersistida = (fabrica: string): string => (fabrica || '').trim() || SIN_FABRICA;

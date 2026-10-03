@@ -54,18 +54,19 @@ React). `index.html` lo carga con un `<script type="module">` que lo expone en
 
 - **🔍 Analizar inventario** → corre `parseArticles()` sobre las descripciones
   del catálogo y muestra: chips por fábrica (`summarizeFabricas`), stats
-  (filas / con fábrica / sin fábrica / ofertas / a revisar) y una tabla con los
+  (filas / con fábrica detectada / sin marca → SIN FABRICA / ofertas / a
+  revisar) y una tabla con los
   4 campos del payload: **fábrica, código, descripción y oferta**. Las filas con
   confianza baja salen marcadas con ⚠️.
 - **✅ Completar** → `POST /api/v1/admin/products` (upsert parcial) con los
   artículos a los que les falta **fábrica y/o código**; nunca pisa lo ya
-  cargado y **jamás guarda `SIN FABRICA`** como fábrica (es un grupo del
-  parser: esos artículos quedan con la fábrica que ya tengan, vacía si no
-  tienen). Las ofertas detectadas igualan las 4 listas a la L4 (la oferta manda
-  los precios) y **los costos ya guardados se conservan** (solo se derivan de
-  la L4 si faltan). Sube la revisión: las apps se resincronizan solas.
-  Bloqueado si el modo de sync es `descripcion-costos` (v1 no trae categoría →
-  se pisaría con vacío).
+  cargado. Las filas sin marca detectada se completan con **SIN FABRICA**:
+  **ningún artículo queda sin fábrica** (el backend también la impone en todo
+  write, así ningún cliente puede dejarla vacía). Las ofertas detectadas
+  igualan las 4 listas a la L4 (la oferta manda los precios) y **los costos ya
+  guardados se conservan** (solo se derivan de la L4 si faltan). Sube la
+  revisión: las apps se resincronizan solas. Bloqueado si el modo de sync es
+  `descripcion-costos` (v1 no trae categoría → se pisaría con vacío).
 
 ## Generación y subida
 
@@ -80,8 +81,8 @@ React). `index.html` lo carga con un `<script type="module">` que lo expone en
 5. **Generar catálogo** → parsea en el navegador, calcula costo neto, costo+IVA
    y las 4 listas, y genera `codigo_unico` (misma regla que el CLI:
    `abrev(marca) + modelo`). Además corre `articleParser.js` sobre cada nombre
-   y completa **fábrica** y **código** (si el Excel no los trae) y decide la
-   **oferta**.
+   y completa **fábrica** y **código** (si el Excel no los trae; sin marca
+   detectada queda **SIN FABRICA**) y decide la **oferta**.
 6. **Subir a la nube** → `POST /api/v1/admin/products` con
    `{ products, replace: true }` → el Worker hace backup rotativo + borra +
    inserta, atómico.

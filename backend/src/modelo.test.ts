@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { calcularCostos, cfgDesde, derivarCostos, PRECIOS_DEFAULT } from './modelo';
+import { calcularCostos, cfgDesde, derivarCostos, fabPersistida, PRECIOS_DEFAULT, SIN_FABRICA } from './modelo';
 
 // Fórmula LEGACY tal como estaba hardcodeada en app.js / importCatalogo.ts:
 //   costo = L4 / (1.21 * 1.50)
@@ -68,4 +68,13 @@ test('cfgDesde completa el factor de la L4 aunque venga un array de 3', () => {
   const cfg = cfgDesde({ listas: [2, 1.9, 1.7] });
   assert.equal(cfg.listas.length, 4);
   assert.equal(cfg.listas[3], 1.5);
+});
+
+test('fábrica: vacía o en blanco → SIN_FABRICA (ningún artículo queda sin fábrica)', () => {
+  assert.equal(SIN_FABRICA, 'SIN FABRICA');
+  assert.equal(fabPersistida(''), SIN_FABRICA);
+  assert.equal(fabPersistida('   '), SIN_FABRICA);
+  assert.equal(fabPersistida(SIN_FABRICA), SIN_FABRICA);
+  assert.equal(fabPersistida('BAKHOU'), 'BAKHOU');
+  assert.equal(fabPersistida('  BAKHOU  '), 'BAKHOU');
 });

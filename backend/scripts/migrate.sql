@@ -20,7 +20,7 @@
 -- Tablas de backup (IF NOT EXISTS = seguro para bases frescas y viejas).
 CREATE TABLE IF NOT EXISTS products_bak (
   codigo_unico TEXT PRIMARY KEY,
-  fabrica      TEXT NOT NULL DEFAULT '',
+  fabrica      TEXT NOT NULL DEFAULT 'SIN FABRICA',
   codigo       TEXT NOT NULL DEFAULT '',
   descripcion  TEXT NOT NULL,
   costo_neto   REAL NOT NULL DEFAULT 0,
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS products_bak (
 
 CREATE TABLE IF NOT EXISTS products_bak2 (
   codigo_unico TEXT PRIMARY KEY,
-  fabrica      TEXT NOT NULL DEFAULT '',
+  fabrica      TEXT NOT NULL DEFAULT 'SIN FABRICA',
   codigo       TEXT NOT NULL DEFAULT '',
   descripcion  TEXT NOT NULL,
   costo_neto   REAL NOT NULL DEFAULT 0,

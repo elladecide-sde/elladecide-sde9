@@ -42,7 +42,7 @@ import { bearerToken, generateSalt, hashPassword, safeEqual, signJwt, verifyJwt,
 import { computeCatalogHash, type ProductRef } from './hash';
 import { partir } from './codigoUnico';
 import { importCatalogo } from './importCatalogo';
-import { derivarCostos, listasDe, PRECIOS_DEFAULT, type Producto } from './modelo';
+import { derivarCostos, fabPersistida, listasDe, PRECIOS_DEFAULT, type Producto } from './modelo';
 
 export interface Env {
   DB: D1Database;
@@ -170,7 +170,7 @@ function multiInsert(db: D1Database, table: string, products: Product[]): D1Prep
       const l = p.precios;
       values.push(
         p.codigo_unico,
-        p.fabrica || '',
+        fabPersistida(p.fabrica),
         p.codigo || '',
         p.descripcion,
         p.costo_neto,
@@ -341,7 +341,7 @@ async function upsertProducts(db: D1Database, products: Product[]) {
         )
         .bind(
           p.codigo_unico,
-          p.fabrica || '',
+          fabPersistida(p.fabrica),
           p.codigo || '',
           p.descripcion,
           p.costo_neto,
@@ -552,6 +552,8 @@ async function handleImport(request: Request, env: Env): Promise<Response> {
  * un cliente viejo no deja columnas en 0. Si la página mandó los costos, se
  * respetan tal cual. `codigo` y `oferta` son OPCIONALES por el mismo motivo:
  * los clientes que no los conocen quedan con '' / false (nunca NULL).
+ * `fabrica` es la ÚNICA que no puede quedar vacía: ausente o en blanco →
+ * SIN_FABRICA (regla de negocio: ningún artículo queda sin fábrica).
  */
 function normalizeProducts(body: unknown): Product[] {
   const list: unknown[] = Array.isArray(body)
@@ -598,7 +600,7 @@ function normalizeProducts(body: unknown): Product[] {
       costo_iva,
       precios,
       categoria: typeof p.categoria === 'string' ? p.categoria.trim() : '',
-      fabrica: typeof p.fabrica === 'string' ? p.fabrica.trim() : '',
+      fabrica: fabPersistida(typeof p.fabrica === 'string' ? p.fabrica : ''),
       codigo: typeof p.codigo === 'string' ? p.codigo.trim() : '',
       oferta: p.oferta === true || p.oferta === 1 || p.oferta === 'true',
     };
