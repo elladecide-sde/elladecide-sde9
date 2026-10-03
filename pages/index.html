@@ -157,7 +157,7 @@
         <label class="field">
           <span>Formato de <code>/api/v1/sync/v2</code></span>
           <select id="syncMode">
-            <option value="predeterminado">Predeterminado — { codigo_unico, descripcion, precios[], categoria, fabrica }</option>
+            <option value="predeterminado">Predeterminado — todos los campos (descripcion, precios[], costos, categoria, fabrica, codigo, oferta, updated_at)</option>
             <option value="descripcion-costos">Descripción-Costos — { descripcion, costo }</option>
           </select>
         </label>
@@ -188,13 +188,28 @@
     <!-- ══ ADMINISTRACIÓN ══════════════════════════════════════════════════ -->
     <section class="view" id="view-admin" hidden>
       <h2 class="block-title">🗂️ Administración</h2>
-      <p class="muted inv-sub">Categorías y fábricas del catálogo.</p>
-      <div class="empty">
-        <div class="empty-ico">🗂️</div>
-        <p class="empty-title">Próximamente</p>
-        <p class="muted">Acá se van a poder crear, renombrar y agrupar las categorías y
-          fábricas que viajan en el catálogo.</p>
-      </div>
+      <p class="muted inv-sub">Fábricas, códigos y ofertas del catálogo.</p>
+
+      <section class="block">
+        <h3 class="block-title">🔎 Parser de artículos</h3>
+        <p class="hint">
+          <code>articleParser.js</code> recorre las descripciones del inventario y separa
+          <strong>fábrica</strong>, <strong>código</strong>, <strong>descripción</strong> y
+          <strong>oferta</strong> de cada fila. Primero revisá el resultado y después aplicá
+          las fábricas detectadas: <strong>solo completa las que están vacías</strong>, nunca
+          pisa una fábrica ya cargada.
+        </p>
+        <div class="actions">
+          <button id="adminAnalizar" class="btn secondary" type="button">🔍 Analizar inventario</button>
+          <button id="adminAplicar" class="btn primary" type="button" disabled>✅ Aplicar fábricas (solo vacías)</button>
+        </div>
+        <span id="adminStatus" class="status"></span>
+
+        <div id="adminStats" class="admin-stats" hidden></div>
+        <div id="adminFabs" class="admin-pills" hidden></div>
+        <div id="adminPreview" class="preview" hidden></div>
+        <p class="hint" id="adminLegend" hidden></p>
+      </section>
     </section>
 
     <footer class="foot">LOLA · panel de catálogo</footer>
@@ -226,6 +241,13 @@
         <label class="field"><span>Fábrica</span><input type="text" id="edFab" autocomplete="off"></label>
       </div>
 
+      <div class="grid2">
+        <label class="field"><span>Código (fábrica)</span><input type="text" id="edCodFab" autocomplete="off"></label>
+        <label class="field"><span>Oferta</span>
+          <span class="chk"><input type="checkbox" id="edOferta"> En oferta — las 4 listas iguales</span>
+        </label>
+      </div>
+
       <p class="hint" id="edCosto"></p>
       <p class="hint">Los costos (neto y con IVA) se derivan de la L4 con la
         <strong>configuración actual de precios</strong> de Configuración. Subir el
@@ -242,5 +264,14 @@
   <script src="xlsx.full.min.js"></script>
   <script src="codigoUnico.js"></script>
   <script src="app.js"></script>
+  <!-- articleParser.js es ESM puro (mismo archivo que importa el proyecto React).
+       Este shim lo importa y lo deja en window.LolaParser para app.js (clásico).
+       Los módulos se ejecutan DESPUÉS de app.js: por eso app.js solo lo pide
+       adentro de los handlers (click), nunca al cargar. -->
+  <script type="module">
+    import { FABRICAS, SIN_FABRICA, parseArticles, toPayload, buildPayload, summarizeFabricas }
+      from './articleParser.js';
+    window.LolaParser = { FABRICAS, SIN_FABRICA, parseArticles, toPayload, buildPayload, summarizeFabricas };
+  </script>
 </body>
 </html>

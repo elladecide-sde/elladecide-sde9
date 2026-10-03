@@ -50,6 +50,23 @@ export interface ResultadoImport {
 
 const DEFAULT_OFERTA = ['oferta', 'liq'];
 
+/* ── Marcas de oferta (espejo fiel de pages/articleParser.js) ───────────────
+ * Cada regla se aplica a UNA palabra completa, tolerante a mayús/acentos y a
+ * puntuación ("LIQ." → LIQ). El backend así decide IGUAL que el parser de la
+ * web: un mismo Excel no produce ofertas distintas según quién lo suba. */
+const stripUp = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+const cleanTok = (s: string) => stripUp(s).replace(/[^A-Z0-9]/g, '');
+const OFFER_RULES: RegExp[] = [
+  /^OFE(R(T(A|AS)?)?)?$/,        // ofe, ofer, ofert, oferta(s)
+  /^LIQ(UID\w*)?$/,              // liq, liq., liquidacion(es), liquidado
+  /^PROMO(S|CION|CIONES)?$/,     // promo, promocion
+  /^(REMATE|SALDOS?|OUTLET)$/,
+  /^(DESCUENTOS?|DTO)$/,
+];
+function esMarcaOferta(nombre: string): boolean {
+  return nombre.split(/\s+/).some((t) => OFFER_RULES.some((re) => re.test(cleanTok(t))));
+}
+
 /** Filtros y regla de precios espejo del generador de la página. */
 export function importCatalogo(filas: unknown[][], opts: OpcionesImport = {}): ResultadoImport {
   const colNombre = opts.colNombre ?? 0;
@@ -143,7 +160,11 @@ export function importCatalogo(filas: unknown[][], opts: OpcionesImport = {}): R
     // Regla uniforme: la L4 del Excel (o el precio de oferta) entra a la
     // fórmula y de ahí salen costo_iva, costo_neto y las 4 listas.
     const c = calcularCostos(f.precio, cfg);
-    const precios = esOferta(f.nombre) ? Array(4).fill(Math.round(f.precio)) : c.precios;
+    // Oferta = unión de AMBAS detecciones (más certero): sufijos configurables
+    // (termina en '.', 'oferta', 'liq') + marcas tipo PROMO/REMATE/DESCUENTO.
+    // Si es oferta, manda el precio del Excel: las 4 listas quedan iguales.
+    const oferta = esOferta(f.nombre) || esMarcaOferta(f.nombre);
+    const precios = oferta ? Array(4).fill(Math.round(f.precio)) : c.precios;
     productos.push({
       codigo_unico: codigos.get(nombreNormalizado(f.nombre))!,
       descripcion: f.nombre,
@@ -152,6 +173,8 @@ export function importCatalogo(filas: unknown[][], opts: OpcionesImport = {}): R
       precios,
       categoria: f.categoria,
       fabrica: f.fabrica,
+      codigo: f.codigoExcel,
+      oferta,
     });
   }
 

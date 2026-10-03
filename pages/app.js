@@ -8,7 +8,8 @@
 //   · Inventario      → lista completa del catálogo + buscador fuzzy + editar/borrar
 //   · Catálogo        → Excel → generar → subir (replace) + rollback
 //   · Configuración   → precios (IVA/factores), modo de sync y contraseña
-//   · Administración  → categorías / fábricas (por ahora vacía)
+//   · Administración  → parser de artículos: fábrica / código / descripción /
+//                       oferta por fila + aplicar las fábricas al catálogo
 //
 // Precios (espejo de backend/src/modelo.ts):
 //   costo + IVA = Lista 4 / (1 + inversa/100)        → Lista 4 / 1,50
@@ -196,18 +197,34 @@ function procesarCatalogo(rows, colNombre, colPrecio, colCodigo, colCategoria, c
   // codigo_unico determinístico (regla de la página = backend).
   const { codigos } = LolaCodigo.asignarCodigos(unicas.map((f) => ({ nombre: f.nombre })));
 
+  // Parser de artículos (fábrica · código · oferta). Corre acá adentro (nunca
+  // al cargar el archivo): window.LolaParser lo define el módulo ESM de
+  // articleParser.js y este handler siempre es un click posterior a la carga.
+  // Sin parser (o cargando) se sigue el flujo de siempre: el Excel manda solo.
+  const P = window.LolaParser;
+  const parsed = P ? P.buildPayload(unicas.map((f) => f.nombre)) : null;
+
   // Modelo interno COMPLETO: costo neto + costo con IVA + las 4 listas +
-  // categoría + fábrica. Nada se tira.
-  const productos = unicas.map((f) => {
+  // categoría + fábrica + código + oferta. Nada se tira.
+  const productos = unicas.map((f, i) => {
     const c = calcularPrecios(f.precio);
+    const pl = parsed ? parsed[i] : null;
+    // Oferta = unión de AMBAS detecciones (más certero): sufijos de siempre
+    // (termina en '.', 'oferta', 'liq') + marcas del parser (PROMO, REMATE…).
+    const oferta = esOferta(f.nombre) || !!(pl && pl.oferta);
+    // Fábrica/código: el Excel primero (dato fuente); si viene vacío, el parser.
+    // "SIN FABRICA" es un grupo, no una fábrica: no se persiste.
+    const fabParser = pl && pl.fabrica !== P.SIN_FABRICA ? pl.fabrica : '';
     return {
       codigo_unico: codigos.get(LolaCodigo.nombreNormalizado(f.nombre)),
-      descripcion: f.nombre,
+      descripcion: f.nombre, // descripción CRUDA: búsquedas y v1 intactos
       costo_neto: c.costo_neto,
       costo_iva: c.costo_iva,
-      precios: esOferta(f.nombre) ? Array(4).fill(Math.round(f.precio)) : c.precios,
+      precios: oferta ? Array(4).fill(Math.round(f.precio)) : c.precios,
       categoria: f.categoria,
-      fabrica: f.fabrica,
+      fabrica: f.fabrica || fabParser,
+      codigo: f.codigoExcel || (pl ? pl.codigo : ''),
+      oferta,
     };
   });
 
@@ -297,11 +314,16 @@ function renderAuth() {
   if (!logged) {
     productosGenerados = null;
     inventario = null;
+    adminItems = null;
+    adminPendientes = null;
     vistaActual = 'inventario';
     for (const n of VISTAS) $('view-' + n).hidden = true;
     $('invSearch').value = '';
     $('preview').hidden = true;
     $('subir').disabled = true;
+    ocultarResultadosAdmin();
+    $('adminAplicar').disabled = true;
+    setAdminStatus('', true);
     setStatus('', true);
   } else {
     setVista(vistaActual);
@@ -554,7 +576,7 @@ $('syncGuardar').addEventListener('click', async () => {
   try {
     setSyncStatus('Aplicando…', true);
     const j = await apiAdmin('/api/v1/admin/sync-config', { body: { modo } });
-    setSyncStatus(`✅ Modo "${j.modo}" — /api/v1/sync/v2 responde { ${j.modo === 'descripcion-costos' ? 'descripcion, costo' : 'codigo_unico, descripcion, precios[], categoria, fabrica'} }`, true);
+    setSyncStatus(`✅ Modo "${j.modo}" — /api/v1/sync/v2 responde { ${j.modo === 'descripcion-costos' ? 'descripcion, costo' : 'todos los campos: descripcion, precios[], costos, categoria, fabrica, codigo, oferta, updated_at'} }`, true);
     inventario = null; // el modo define qué campos trae el inventario
   } catch (e) {
     setSyncStatus('❌ ' + e.message, false);
@@ -583,7 +605,7 @@ function normalizar(s) {
   return String(s ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
-const hayDe = (p) => normalizar([p.codigo_unico, p.descripcion, p.categoria, p.fabrica].filter(Boolean).join(' '));
+const hayDe = (p) => normalizar([p.codigo_unico, p.descripcion, p.categoria, p.fabrica, p.codigo].filter(Boolean).join(' '));
 
 /** Índice de búsqueda precalculado: hay (texto pegado) + palabras sueltas + código. */
 const indexar = (p) => {
@@ -687,6 +709,8 @@ async function cargarInventario() {
         precios: Array.isArray(p.precios) ? p.precios : [],
         categoria: p.categoria || '',
         fabrica: p.fabrica || '',
+        codigo: p.codigo || '',
+        oferta: p.oferta === true,
       }));
     } else {
       // Modo "descripcion-costos": no trae código ni metadatos → contrato v1
@@ -702,6 +726,8 @@ async function cargarInventario() {
         precios: Array.isArray(p.precios) ? p.precios : [],
         categoria: '',
         fabrica: '',
+        codigo: '',
+        oferta: false,
       }));
     }
 
@@ -765,7 +791,7 @@ function filaInventario(p) {
   desc.textContent = p.descripcion;
   const tags = document.createElement('span');
   tags.className = 'inv-tags';
-  tags.textContent = [p.categoria, p.fabrica].filter(Boolean).join(' · ');
+  tags.textContent = [p.categoria, p.fabrica, p.codigo, p.oferta ? '🔥 OFERTA' : ''].filter(Boolean).join(' · ');
   main.append(code, desc, tags);
 
   const precios = document.createElement('div');
@@ -888,6 +914,8 @@ function abrirEdicion(p) {
   for (let i = (p.precios || []).length; i < 4; i++) $(`edL${i + 1}`).value = '';
   $('edCat').value = p.categoria || '';
   $('edFab').value = p.fabrica || '';
+  $('edCodFab').value = p.codigo || '';
+  $('edOferta').checked = !!p.oferta;
   setEdStatus('', true);
   pintarCostoEdicion();
   $('editModal').hidden = false;
@@ -911,7 +939,7 @@ $('edRecalc').addEventListener('click', () => {
   const l4 = Number($('edL4').value);
   if (!Number.isFinite(l4) || l4 <= 0) { setEdStatus('La L4 tiene que ser un número > 0', false); return; }
   const c = calcularPrecios(l4);
-  if (esOferta($('edDesc').value)) {
+  if (esOferta($('edDesc').value) || $('edOferta').checked) {
     for (let i = 1; i <= 4; i++) $(`edL${i}`).value = Math.round(l4);
   } else {
     $('edL1').value = c.precios[0];
@@ -921,6 +949,17 @@ $('edRecalc').addEventListener('click', () => {
   }
   pintarCostoEdicion();
   setEdStatus('↺ Listas recalculadas con la configuración actual — guardá para aplicar', true);
+});
+
+// Tildar Oferta = la regla "la oferta manda los precios": las 4 listas quedan
+// iguales a la L4 (si no hay L4 cargada no se hace nada).
+$('edOferta').addEventListener('change', () => {
+  if (!$('edOferta').checked) return;
+  const l4 = Number($('edL4').value);
+  if (!Number.isFinite(l4) || l4 <= 0) return;
+  for (let i = 1; i <= 4; i++) $(`edL${i}`).value = Math.round(l4);
+  pintarCostoEdicion();
+  setEdStatus('🔥 En oferta: las 4 listas quedaron iguales a la L4 — guardá para aplicar', true);
 });
 
 $('edGuardar').addEventListener('click', async () => {
@@ -936,6 +975,8 @@ $('edGuardar').addEventListener('click', async () => {
     precios: l.map((n) => Math.round(n)),
     categoria: $('edCat').value.trim(),
     fabrica: $('edFab').value.trim(),
+    codigo: $('edCodFab').value.trim(),
+    oferta: $('edOferta').checked,
   };
   const c = calcularPrecios(l[3]);
   producto.costo_neto = c.costo_neto;
@@ -971,6 +1012,224 @@ async function borrarProducto(p) {
     setInvStatus('❌ ' + e.message, false);
   }
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Sección Administración — parser de artículos (fábrica · código · oferta)
+// ════════════════════════════════════════════════════════════════════════════
+// articleParser.js vive en pages/ como ESM puro y index.html lo importa con un
+// <script type="module"> que lo deja en window.LolaParser. Ese módulo se evalúa
+// DESPUÉS que app.js (clásico): por eso solo se pide adentro de los handlers,
+// nunca al cargar el archivo.
+
+let adminItems = null;      // parseArticles() sobre las descripciones del inventario
+let adminPendientes = null; // [{ i, producto, conDuda }] listos para aplicar
+const ADMIN_MOSTRAR = 50;   // filas visibles en la tabla de vista previa
+
+function setAdminStatus(msg, ok) {
+  const el = $('adminStatus');
+  el.textContent = msg;
+  el.className = 'status ' + (ok ? 'ok' : 'err');
+}
+
+function ocultarResultadosAdmin() {
+  for (const id of ['adminStats', 'adminFabs', 'adminPreview', 'adminLegend']) $(id).hidden = true;
+}
+
+function pintarAdminPreview(payload, items) {
+  const cont = $('adminPreview');
+  cont.innerHTML = '';
+
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  ['Fábrica', 'Código', 'Descripción', 'Oferta'].forEach((t) => {
+    const th = document.createElement('th');
+    th.textContent = t;
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+
+  const tbody = document.createElement('tbody');
+  payload.slice(0, ADMIN_MOSTRAR).forEach((x, i) => {
+    const tdFab = document.createElement('td');
+    if (items[i].revisar) {
+      const w = document.createElement('span');
+      w.className = 'admin-warn';
+      w.textContent = '⚠️ ';
+      w.title = 'Confianza baja: revisalo a mano en 📦 Inventario';
+      tdFab.appendChild(w);
+    }
+    tdFab.appendChild(document.createTextNode(x.fabrica));
+    const tdCod = document.createElement('td');
+    tdCod.textContent = x.codigo || '—';
+    const tdDesc = document.createElement('td');
+    tdDesc.textContent = x.descripcion;
+    const tdOferta = document.createElement('td');
+    tdOferta.textContent = x.oferta ? 'Sí' : '—';
+    const tr = document.createElement('tr');
+    tr.append(tdFab, tdCod, tdDesc, tdOferta);
+    tbody.appendChild(tr);
+  });
+
+  const tabla = document.createElement('table');
+  tabla.append(thead, tbody);
+  cont.appendChild(tabla);
+  cont.hidden = false;
+
+  const legend = $('adminLegend');
+  const mostradas = Math.min(ADMIN_MOSTRAR, payload.length);
+  legend.textContent = mostradas < payload.length
+    ? `⚠️ = confianza baja (revisalo en 📦 Inventario). Se muestran ${mostradas} de ${payload.length} filas.`
+    : '⚠️ = confianza baja (revisalo en 📦 Inventario).';
+  legend.hidden = false;
+}
+
+async function analizarInventario() {
+  const P = window.LolaParser;
+  if (!P) { setAdminStatus('❌ articleParser.js no cargó — recargá la página', false); return; }
+  try {
+    $('adminAnalizar').disabled = true;
+    $('adminAplicar').disabled = true;
+    ocultarResultadosAdmin();
+    adminPendientes = null;
+    setAdminStatus('Analizando las descripciones…', true);
+
+    if (inventario === null) await cargarInventario();
+    if (inventario === null && invCargando) {
+      setAdminStatus('El inventario se está cargando en otra pestaña — probá de nuevo en un segundo', false);
+      return;
+    }
+    if (!inventario || !inventario.length) {
+      adminItems = null;
+      setAdminStatus('El inventario está vacío — subí un catálogo desde 📂 Catálogo', false);
+      return;
+    }
+
+    adminItems = P.parseArticles(inventario.map((p) => p.descripcion));
+    const payload = adminItems.map(P.toPayload);
+    const total = payload.length;
+    const conFabrica = payload.filter((x) => x.fabrica !== P.SIN_FABRICA).length;
+    const ofertas = payload.filter((x) => x.oferta).length;
+    const aRevisar = adminItems.filter((x) => x.revisar).length;
+
+    // Chips por fábrica (SIN FABRICA al final, ya lo ordena summarizeFabricas)
+    const fabs = $('adminFabs');
+    fabs.innerHTML = '';
+    for (const f of P.summarizeFabricas(adminItems)) {
+      const chip = document.createElement('span');
+      chip.className = 'pill' + (f.nombre === P.SIN_FABRICA ? ' sin' : '');
+      chip.textContent = `${f.nombre} · ${f.total}`;
+      if (f.ofertas) {
+        const b = document.createElement('b');
+        b.textContent = ` (${f.ofertas} ofertas)`;
+        chip.appendChild(b);
+      }
+      fabs.appendChild(chip);
+    }
+    fabs.hidden = false;
+
+    const stats = $('adminStats');
+    stats.innerHTML = '';
+    for (const t of [
+      `${total} filas`,
+      `${conFabrica} con fábrica`,
+      `${total - conFabrica} sin fábrica`,
+      `${ofertas} ofertas`,
+      `${aRevisar} a revisar`,
+    ]) {
+      const s = document.createElement('span');
+      s.className = 'pill';
+      s.textContent = t;
+      stats.appendChild(s);
+    }
+    stats.hidden = false;
+
+    pintarAdminPreview(payload, adminItems);
+
+    // Pendientes a aplicar: solo COMPLETAR lo que falta (fábrica y/o código),
+    // nunca pisar lo ya cargado. La oferta se recalcula con la regla combinada
+    // (sufijos + marcas del parser) y, si es oferta, mandan los precios.
+    adminPendientes = [];
+    let sinPrecios = 0;
+    inventario.forEach((p, i) => {
+      const it = adminItems[i];
+      const x = payload[i];
+      const fabCargada = (p.fabrica || '').trim();
+      const codCargado = (p.codigo || '').trim();
+      const faltaFabrica = !fabCargada && !it.sinFabrica; // grupo SIN FABRICA no entra
+      const faltaCodigo = !codCargado && !!x.codigo;
+      if (!faltaFabrica && !faltaCodigo) return;
+      const precios = (p.precios || []).map((n) => Math.round(Number(n)));
+      if (!Number.isFinite(precios[3]) || precios[3] <= 0) { sinPrecios++; return; }
+      const oferta = !!(p.oferta || x.oferta);
+      const finales = oferta ? Array(4).fill(precios[3]) : precios; // la oferta manda los precios
+      const c = calcularPrecios(finales[3]);
+      adminPendientes.push({
+        i,
+        conDuda: it.revisar,
+        producto: {
+          codigo_unico: p.codigo_unico,
+          descripcion: p.descripcion,
+          precios: finales,
+          categoria: p.categoria || '',
+          fabrica: fabCargada || it.fabrica,
+          codigo: codCargado || x.codigo,
+          oferta,
+          costo_neto: c.costo_neto,
+          costo_iva: c.costo_iva,
+        },
+      });
+    });
+
+    const n = adminPendientes.length;
+    const dudas = adminPendientes.filter((x) => x.conDuda).length;
+    let msg = `✅ ${total} filas · ${n} artículos para completar`;
+    if (dudas) msg += ` · ${dudas} con confianza baja`;
+    if (sinPrecios) msg += ` · ${sinPrecios} sin precios válidos`;
+    if (invSinMeta) {
+      $('adminAplicar').disabled = true;
+      setAdminStatus(`${msg} · ⚠️ modo de sync sin metadatos: aplicar está bloqueado (pisaría categorías)`, false);
+    } else {
+      $('adminAplicar').disabled = n === 0;
+      setAdminStatus(msg, true);
+    }
+  } catch (e) {
+    setAdminStatus('❌ ' + e.message, false);
+  } finally {
+    $('adminAnalizar').disabled = false;
+  }
+}
+
+$('adminAnalizar').addEventListener('click', analizarInventario);
+
+$('adminAplicar').addEventListener('click', async () => {
+  if (!adminPendientes || !adminPendientes.length) { setAdminStatus('No hay artículos pendientes de completar', false); return; }
+  if (invSinMeta) {
+    setAdminStatus('⚠️ El modo de sync actual no expone categoría/fábrica: aplicar pisaría las categorías con un string vacío. Cambiá a "predeterminado" en ⚙️ Configuración.', false);
+    return;
+  }
+  const n = adminPendientes.length;
+  const dudas = adminPendientes.filter((x) => x.conDuda).length;
+  const seguro = confirm(
+    `¿Completar ${n} artículos del catálogo?\n\n` +
+    '· Se completan fábricas y códigos que faltan (los ya cargados no se tocan).\n' +
+    '· Las ofertas detectadas igualan las 4 listas a la L4 (la oferta manda los precios).\n' +
+    (dudas ? `· ${dudas} tienen confianza baja (⚠️ en la tabla).\n` : '') +
+    '· Los costos se recalculan con la configuración actual (igual que al editar).\n\n' +
+    'Sube la revisión: todas las apps se resincronizan solas.',
+  );
+  if (!seguro) return;
+  try {
+    setAdminStatus(`Aplicando ${n} artículos…`, true);
+    const r = await apiAdmin('/api/v1/admin/products', { body: { products: adminPendientes.map((x) => x.producto) } });
+    for (const x of adminPendientes) inventario[x.i] = indexar(x.producto);
+    aplicarBusqueda();
+    adminPendientes = null;
+    $('adminAplicar').disabled = true;
+    setAdminStatus(`✅ ${n} artículos completados (fábrica · código · oferta) — revisión ${r.revision} · las apps se resincronizan solas`, true);
+  } catch (e) {
+    setAdminStatus('❌ ' + e.message, false);
+  }
+});
 
 // ── Inicial ─────────────────────────────────────────────────────────────────
 pintarCfg();

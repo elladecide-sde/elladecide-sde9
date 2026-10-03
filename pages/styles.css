@@ -255,6 +255,15 @@ code { background: var(--surface-2); padding: 1px 6px; border-radius: 5px; }
 .empty-ico { font-size: 34px; margin-bottom: 10px; }
 .empty-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
 
+/* ── Administración ──────────────────────────────────────────────────────── */
+.admin-stats { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.admin-stats .pill { background: var(--surface-3); color: var(--text); }
+.admin-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.admin-pills .pill { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); }
+.admin-pills .pill b { color: var(--accent-2); }
+.admin-pills .pill.sin { color: var(--muted); }
+.admin-warn { color: var(--red); }
+
 /* ── Modal ────────────────────────────────────────────────────────────────── */
 .modal {
   position: fixed; inset: 0;
@@ -279,6 +288,8 @@ code { background: var(--surface-2); padding: 1px 6px; border-radius: 5px; }
 .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 .grid4 .field { margin-bottom: 12px; }
 #edCodigo { font-family: ui-monospace, "Cascadia Mono", monospace; color: var(--accent-2); }
+.chk { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text); min-height: 34px; }
+.chk input { width: auto; accent-color: var(--accent); }
 
 @media (max-width: 700px) {
   .inv-row { grid-template-columns: minmax(0, 1fr) auto; }

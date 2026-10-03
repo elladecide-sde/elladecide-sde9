@@ -50,3 +50,39 @@ test('import: oferta (nombre que termina en ".") → 4 listas iguales, costos de
   assert.ok(p.costo_iva > 0 && p.costo_neto > 0, 'los costos igual se derivan');
   assert.ok(Math.abs(p.costo_iva - 1200 / 1.5) < 1e-9);
 });
+
+test('import: regla COMBINADA — la marca PROMO/REMATE también es oferta (el sufijo solo no la veía)', () => {
+  const filas = [
+    ['h', 'p'],
+    ['BAKHOU 2000 LISO PROMO', 1000],
+    ['KAURY 8146 TRIANG REMATE', 2000],
+    ['CALZA BIKER 508/E SALDOS', 3000],
+    ['AVRIL KAURY 1001 BRALETT', 4000], // sin marca → NO es oferta
+  ];
+  const r = importCatalogo(filas, { colNombre: 0, colPrecio: 1, skip: 1 });
+  const porDesc = new Map(r.productos.map((p) => [p.descripcion, p]));
+
+  for (const d of ['BAKHOU 2000 LISO PROMO', 'KAURY 8146 TRIANG REMATE', 'CALZA BIKER 508/E SALDOS']) {
+    const p = porDesc.get(d)!;
+    assert.equal(p.oferta, true, `${d} → oferta`);
+    assert.deepEqual(p.precios, [Number(p.precios[0]), Number(p.precios[0]), Number(p.precios[0]), Number(p.precios[0])], `${d} → 4 iguales`);
+  }
+  const normal = porDesc.get('AVRIL KAURY 1001 BRALETT')!;
+  assert.equal(normal.oferta, false);
+  assert.ok(new Set(normal.precios).size > 1, 'sin oferta → listas con la fórmula normal');
+});
+
+test('import: persiste la columna Código del Excel y `oferta` booleano en todos los productos', () => {
+  const filas = [
+    ['h', 'p', 'cod'],
+    ['BAKHOU 2000 LISO ALGODON', 1800, '2103'],
+    ['KAURY 8146 TRIANG', 900, 404],
+    ['SIN CODIGO PANTALON', 700, ''],
+  ];
+  const r = importCatalogo(filas, { colNombre: 0, colPrecio: 1, colCodigo: 2, skip: 1 });
+  const porDesc = new Map(r.productos.map((p) => [p.descripcion, p]));
+  assert.equal(porDesc.get('BAKHOU 2000 LISO ALGODON')?.codigo, '2103');
+  assert.equal(porDesc.get('KAURY 8146 TRIANG')?.codigo, '404', 'numérico → entero sin decimales');
+  assert.equal(porDesc.get('SIN CODIGO PANTALON')?.codigo, '');
+  for (const p of r.productos) assert.equal(typeof p.oferta, 'boolean');
+});

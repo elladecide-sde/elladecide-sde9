@@ -23,6 +23,17 @@ export interface Producto {
   precios: number[];
   categoria: string;
   fabrica: string;
+  /**
+   * Código de fábrica/comercial (columna "Código" del Excel o el del parser:
+   * "041 / 042"). Opcional por compat: los clientes viejos no lo mandan y
+   * queda ''.
+   */
+  codigo?: string;
+  /**
+   * true → artículo en oferta: las 4 listas iguales al precio de oferta.
+   * Opcional por compat (mismo motivo que `codigo`); en D1 se persiste 0/1.
+   */
+  oferta?: boolean;
 }
 
 export interface PreciosCfg {

@@ -12,6 +12,8 @@
     "db:migrate": "wrangler d1 execute lola-db --remote --file ./scripts/migrate.sql",
     "db:reset": "wrangler d1 execute lola-db --remote --file ./scripts/reset.sql",
     "db:reset:local": "wrangler d1 execute lola-db --local --file ./scripts/reset.sql",
+    "db:recreate": "wrangler d1 execute lola-db --remote --file ./scripts/recreate.sql && npm run db:init",
+    "db:recreate:local": "wrangler d1 execute lola-db --local --file ./scripts/recreate.sql && npm run db:init:local",
     "import": "tsx scripts/import-catalogo.ts",
     "test": "tsx --test src/*.test.ts",
     "typecheck": "tsc --noEmit"

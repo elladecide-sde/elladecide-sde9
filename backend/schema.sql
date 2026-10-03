@@ -11,11 +11,18 @@
 --   Lista n    = round(costo_neto × (1 + IVA/100) × factor_n)
 --
 -- Nada se descarta: costo_neto, costo_iva y las 4 listas viven en la fila.
--- `categoria` y `fabrica` se persisten pero NO se envían en el sync.
+-- `codigo` y `oferta` viajan en sync v2 (modo predeterminado) y también en v1:
+-- ese contrato es ADITIVO ({ codigo_unico, nombre, precios } siguen intactos,
+-- se le AGREGAN fabrica, codigo, descripcion, costo_neto, oferta).
 --
 -- Aplicar con:
 --   npx wrangler d1 execute lola-db --local  --file ./schema.sql   (dev)
 --   npx wrangler d1 execute lola-db --remote --file ./schema.sql   (producción)
+--
+-- REGENERAR la base (borra el catálogo activo y sus backups, conserva auth y
+-- config, y recrea con este esquema — después volvé a subir el Excel):
+--   npx wrangler d1 execute lola-db --remote --file ./scripts/recreate.sql
+--   npm run db:init
 -- ============================================================================
 
 -- ── metadata: fila singleton con el estado global ───────────────────────────
@@ -35,10 +42,12 @@ CREATE TABLE IF NOT EXISTS metadata (
 
 -- ── config: ajustes del operador (NO versionan el catálogo) ────────────────
 --   sync_mode : 'predeterminado' | 'descripcion-costos'
---     · predeterminado     → GET /api/v1/sync/v2 responde { codigo_unico,
---                            descripcion, precios[4], categoria, fabrica }
+--     · predeterminado     → GET /api/v1/sync/v2 responde TODA la fila:
+--                            { codigo_unico, descripcion, precios[4], categoria,
+--                              fabrica, codigo, oferta, costo_neto, costo_iva,
+--                              updated_at }
 --     · descripcion-costos → GET /api/v1/sync/v2 responde { descripcion, costo }
---   GET /api/v1/sync (v1) NUNCA mira esta fila: es contrato congelado.
+--   GET /api/v1/sync (v1) NUNCA mira esta fila (es aditivo y va siempre igual).
 CREATE TABLE IF NOT EXISTS config (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,
@@ -58,6 +67,8 @@ ON CONFLICT(key) DO NOTHING;
 --   identidad: cambia con el orden del Excel. Es solo un separador interno.
 CREATE TABLE IF NOT EXISTS products (
   codigo_unico TEXT PRIMARY KEY,
+  fabrica      TEXT NOT NULL DEFAULT '',  -- se envía en v2 (predeterminado)
+  codigo       TEXT NOT NULL DEFAULT '',  -- código de fábrica/comercial ("404 / 425"), NO es identidad
   descripcion  TEXT NOT NULL,
   costo_neto   REAL NOT NULL DEFAULT 0,   -- sin IVA: Lista 4 / (1,50 × 1,21)
   costo_iva    REAL NOT NULL DEFAULT 0,   -- costo + IVA: Lista 4 / 1,50
@@ -65,18 +76,20 @@ CREATE TABLE IF NOT EXISTS products (
   lista2       REAL NOT NULL DEFAULT 0,
   lista3       REAL NOT NULL DEFAULT 0,
   lista4       REAL NOT NULL DEFAULT 0,
-  categoria    TEXT NOT NULL DEFAULT '',  -- se guarda, NO se sincroniza
-  fabrica      TEXT NOT NULL DEFAULT '',  -- se guarda, NO se sincroniza
+  categoria    TEXT NOT NULL DEFAULT '',  -- rubro (NO confundir con oferta)
+  oferta       INTEGER NOT NULL DEFAULT 0,-- 1 = artículo en oferta → las 4 listas iguales
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- ── Backups rotativos (2 versiones anteriores del catálogo) ─────────────────
---   Mismo esquema que products (10 columnas). Antes de cada wipe, el worker
+--   Mismo esquema que products (12 columnas). Antes de cada wipe, el worker
 --   copia el catálogo activo al backup más viejo (según
 --   metadata.backup_state). Sirven para deshacer un upload equivocado vía
 --   POST /api/v1/admin/rollback.
 CREATE TABLE IF NOT EXISTS products_bak (
   codigo_unico TEXT PRIMARY KEY,
+  fabrica      TEXT NOT NULL DEFAULT '',
+  codigo       TEXT NOT NULL DEFAULT '',
   descripcion  TEXT NOT NULL,
   costo_neto   REAL NOT NULL DEFAULT 0,
   costo_iva    REAL NOT NULL DEFAULT 0,
@@ -85,12 +98,14 @@ CREATE TABLE IF NOT EXISTS products_bak (
   lista3       REAL NOT NULL DEFAULT 0,
   lista4       REAL NOT NULL DEFAULT 0,
   categoria    TEXT NOT NULL DEFAULT '',
-  fabrica      TEXT NOT NULL DEFAULT '',
+  oferta       INTEGER NOT NULL DEFAULT 0,
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS products_bak2 (
   codigo_unico TEXT PRIMARY KEY,
+  fabrica      TEXT NOT NULL DEFAULT '',
+  codigo       TEXT NOT NULL DEFAULT '',
   descripcion  TEXT NOT NULL,
   costo_neto   REAL NOT NULL DEFAULT 0,
   costo_iva    REAL NOT NULL DEFAULT 0,
@@ -99,7 +114,7 @@ CREATE TABLE IF NOT EXISTS products_bak2 (
   lista3       REAL NOT NULL DEFAULT 0,
   lista4       REAL NOT NULL DEFAULT 0,
   categoria    TEXT NOT NULL DEFAULT '',
-  fabrica      TEXT NOT NULL DEFAULT '',
+  oferta       INTEGER NOT NULL DEFAULT 0,
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

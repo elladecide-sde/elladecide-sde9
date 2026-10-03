@@ -4,16 +4,19 @@
 // Sync por HASH (catálogo completo):
 //   GET  /api/v1/version       → { revision, hash }
 //   GET  /api/v1/sync          → { revision, hash, products: TODO el catálogo }
-//                                ⚠️  CONTRATO CONGELADO. Los campos son
-//                                { codigo_unico, nombre, precios[4] } y así
-//                                quedan las apps viejas. No se toca.
+//                                ADITIVO: los campos viejos { codigo_unico,
+//                                nombre, precios } siguen idénticos (Android los
+//                                exige) + fabrica, codigo, descripcion,
+//                                costo_neto, oferta. Nunca se quitan campos.
 //   GET  /api/v1/sync/v2       → contrato NUEVO. La forma depende de
 //                                config.sync_mode:
-//                                  · predeterminado     → { codigo_unico,
-//                                    descripcion, precios[4], categoria, fabrica }
+//                                  · predeterminado     → TODOS los campos de la
+//                                    fila: { codigo_unico, descripcion, precios[4],
+//                                    categoria, fabrica, codigo, oferta,
+//                                    costo_neto, costo_iva, updated_at }
 //                                  · descripcion-costos → { descripcion, costo }
 //                                (costo = costo_neto; sin listas, sin costo+IVA,
-//                                 sin categoría, sin fábrica)
+//                                 sin categoría, sin fábrica, sin código, sin oferta)
 //   GET  /api/v1/sync-config   → { modo }
 //   GET  /api/v1/mapa-catalogo → { revision, hash, productos } (editor de fotos)
 //
@@ -31,8 +34,8 @@
 // sube revisión + hash. Si algo falla, todo revierte (no se pierde el backup).
 //
 // LÍMITE D1 que manda el tamaño de los INSERT multi-fila:
-//   "Maximum bound parameters per query = 100" → con 10 columnas por fila van
-//   10 filas por statement (10 × 10 = 100). No subir.
+//   "Maximum bound parameters per query = 100" → con 12 columnas por fila van
+//   8 filas por statement (8 × 12 = 96 ≤ 100). No subir.
 // ============================================================================
 
 import { bearerToken, generateSalt, hashPassword, safeEqual, signJwt, verifyJwt, verifyPassword } from './auth';
@@ -52,11 +55,11 @@ type Product = Producto;
 
 const TOKEN_TTL_SEC = 24 * 60 * 60; // 24 horas
 const BATCH_LIMIT = 100;            // D1 limita los batches a 100 statements
-const INSERT_CHUNK = 10;            // 10 filas × 10 columnas = 100 params (techo D1)
+const INSERT_CHUNK = 8;             // 8 filas × 12 columnas = 96 params (techo D1: 100)
 const BAK = ['products_bak', 'products_bak2'] as const;
 
-const PRODUCT_COLS = 'codigo_unico, descripcion, costo_neto, costo_iva, lista1, lista2, lista3, lista4, categoria, fabrica';
-const LIST_COLS = '(codigo_unico, descripcion, costo_neto, costo_iva, lista1, lista2, lista3, lista4, categoria, fabrica)';
+const PRODUCT_COLS = 'codigo_unico, fabrica, codigo, descripcion, costo_neto, costo_iva, lista1, lista2, lista3, lista4, categoria, oferta';
+const LIST_COLS = '(codigo_unico, fabrica, codigo, descripcion, costo_neto, costo_iva, lista1, lista2, lista3, lista4, categoria, oferta)';
 
 export type SyncMode = 'predeterminado' | 'descripcion-costos';
 const SYNC_MODES: SyncMode[] = ['predeterminado', 'descripcion-costos'];
@@ -91,6 +94,8 @@ interface Meta {
 
 interface RowProducto {
   codigo_unico: string;
+  fabrica: string;
+  codigo: string;
   descripcion: string;
   costo_neto: number;
   costo_iva: number;
@@ -99,7 +104,8 @@ interface RowProducto {
   lista3: number;
   lista4: number;
   categoria: string;
-  fabrica: string;
+  oferta: number; // 0/1 en D1, boolean en el DTO
+  updated_at: string;
 }
 
 async function getMetadata(db: D1Database): Promise<Meta> {
@@ -130,6 +136,8 @@ const rowToProduct = (r: RowProducto): Product => ({
   precios: listasDe(r),
   categoria: r.categoria ?? '',
   fabrica: r.fabrica ?? '',
+  codigo: r.codigo ?? '',
+  oferta: r.oferta === 1,
 });
 
 /**
@@ -151,10 +159,10 @@ async function recomputeHash(db: D1Database): Promise<string> {
   return hash;
 }
 
-/** Genera statements INSERT multi-fila (10 filas por statement = 100 params). */
+/** Genera statements INSERT multi-fila (8 filas por statement = 96 params). */
 function multiInsert(db: D1Database, table: string, products: Product[]): D1PreparedStatement[] {
   const stmts: D1PreparedStatement[] = [];
-  const placeholders = `(${new Array(10).fill('?').join(', ')})`;
+  const placeholders = `(${new Array(12).fill('?').join(', ')})`;
   for (let i = 0; i < products.length; i += INSERT_CHUNK) {
     const slice = products.slice(i, i + INSERT_CHUNK);
     const values: Array<string | number> = [];
@@ -162,6 +170,8 @@ function multiInsert(db: D1Database, table: string, products: Product[]): D1Prep
       const l = p.precios;
       values.push(
         p.codigo_unico,
+        p.fabrica || '',
+        p.codigo || '',
         p.descripcion,
         p.costo_neto,
         p.costo_iva,
@@ -170,7 +180,7 @@ function multiInsert(db: D1Database, table: string, products: Product[]): D1Prep
         Number(l[2]) || 0,
         Number(l[3]) || 0,
         p.categoria || '',
-        p.fabrica || '',
+        p.oferta ? 1 : 0,
       );
     }
     stmts.push(
@@ -314,8 +324,10 @@ async function upsertProducts(db: D1Database, products: Product[]) {
     batch.push(
       db
         .prepare(
-          `INSERT INTO products ${LIST_COLS} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO products ${LIST_COLS} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(codigo_unico) DO UPDATE SET
+             fabrica = excluded.fabrica,
+             codigo = excluded.codigo,
              descripcion = excluded.descripcion,
              costo_neto = excluded.costo_neto,
              costo_iva = excluded.costo_iva,
@@ -324,11 +336,13 @@ async function upsertProducts(db: D1Database, products: Product[]) {
              lista3 = excluded.lista3,
              lista4 = excluded.lista4,
              categoria = excluded.categoria,
-             fabrica = excluded.fabrica,
+             oferta = excluded.oferta,
              updated_at = datetime('now')`,
         )
         .bind(
           p.codigo_unico,
+          p.fabrica || '',
+          p.codigo || '',
           p.descripcion,
           p.costo_neto,
           p.costo_iva,
@@ -337,7 +351,7 @@ async function upsertProducts(db: D1Database, products: Product[]) {
           Number(l[2]) || 0,
           Number(l[3]) || 0,
           p.categoria || '',
-          p.fabrica || '',
+          p.oferta ? 1 : 0,
         ),
     );
   }
@@ -389,9 +403,13 @@ async function rollbackCatalog(db: D1Database, backup: 'bak' | 'bak2') {
 // ── Endpoints ────────────────────────────────────────────────────────────────
 
 /**
- * GET /api/v1/sync — CONTRATO CONGELADO.
- * Los clientes viejos comparan hash y reemplazan. Los campos se siguen
- * llamando `nombre` y `precios`: así quedan, byte por byte.
+ * GET /api/v1/sync — contrato ADITIVO.
+ * Los campos viejos { codigo_unico, nombre, precios } siguen byte idénticos:
+ * Android los exige (getString("nombre") + getJSONArray("precios")). Solo se
+ * AGREGAN los campos nuevos, así los clientes viejos los ignoran (org.json no
+ * falla con campos de más) y los nuevos dejan de adivinar:
+ *   · descripcion = nombre (misma cadena con la clave nueva)
+ *   · oferta      → los 4 precios iguales se confirman con el campo, no a mano
  */
 async function handleSync(db: D1Database) {
   const meta = await getMetadata(db);
@@ -400,6 +418,11 @@ async function handleSync(db: D1Database) {
     codigo_unico: r.codigo_unico,
     nombre: r.descripcion,
     precios: listasDe(r).map((n) => Math.round(n)),
+    fabrica: r.fabrica ?? '',
+    codigo: r.codigo ?? '',
+    descripcion: r.descripcion,
+    costo_neto: r.costo_neto,
+    oferta: r.oferta === 1,
   }));
   return json({ revision: meta.revision, hash: meta.hash, products });
 }
@@ -412,7 +435,11 @@ async function handleSync(db: D1Database) {
 async function handleSyncV2(db: D1Database) {
   const meta = await getMetadata(db);
   const modo = await getSyncMode(db);
-  const res = await db.prepare(`SELECT ${PRODUCT_COLS} FROM products ORDER BY codigo_unico`).all<RowProducto>();
+  // updated_at NO está en PRODUCT_COLS (esas columnas alimentan INSERT/backup):
+  // se suma SOLO acá, que es donde v2 expone la fila completa.
+  const res = await db
+    .prepare(`SELECT ${PRODUCT_COLS}, updated_at FROM products ORDER BY codigo_unico`)
+    .all<RowProducto>();
 
   if (modo === 'descripcion-costos') {
     // Únicamente { descripcion, costo }. Sin listas, sin costo+IVA,
@@ -430,6 +457,11 @@ async function handleSyncV2(db: D1Database) {
     precios: listasDe(r).map((n) => Math.round(n)),
     categoria: r.categoria ?? '',
     fabrica: r.fabrica ?? '',
+    codigo: r.codigo ?? '',
+    oferta: r.oferta === 1,
+    costo_neto: r.costo_neto,
+    costo_iva: r.costo_iva,
+    updated_at: r.updated_at,
   }));
   return json({ revision: meta.revision, hash: meta.hash, format: modo, products });
 }
@@ -512,12 +544,14 @@ async function handleImport(request: Request, env: Env): Promise<Response> {
 /**
  * Acepta DOS formas y las normaliza al modelo completo:
  *   · NUEVA  : { codigo_unico, descripcion, costo_neto?, costo_iva?,
- *               precios[4] | lista1..lista4, categoria?, fabrica? }
+ *               precios[4] | lista1..lista4, categoria?, fabrica?, codigo?,
+ *               oferta? }
  *   · VIEJA  : { codigo_unico, nombre, precios[4] }   ← el shape de siempre
  *
  * Si no vienen los costos se DERIVAN de la L4 con los defaults (21 / 50), así
  * un cliente viejo no deja columnas en 0. Si la página mandó los costos, se
- * respetan tal cual.
+ * respetan tal cual. `codigo` y `oferta` son OPCIONALES por el mismo motivo:
+ * los clientes que no los conocen quedan con '' / false (nunca NULL).
  */
 function normalizeProducts(body: unknown): Product[] {
   const list: unknown[] = Array.isArray(body)
@@ -565,6 +599,8 @@ function normalizeProducts(body: unknown): Product[] {
       precios,
       categoria: typeof p.categoria === 'string' ? p.categoria.trim() : '',
       fabrica: typeof p.fabrica === 'string' ? p.fabrica.trim() : '',
+      codigo: typeof p.codigo === 'string' ? p.codigo.trim() : '',
+      oferta: p.oferta === true || p.oferta === 1 || p.oferta === 'true',
     };
   });
 }
@@ -584,7 +620,7 @@ export default {
       if (method === 'GET' && path === '/api/v1/version') {
         res = json(await getMetadata(env.DB));
       } else if (method === 'GET' && path === '/api/v1/sync') {
-        // CONTRATO CONGELADO — no agregar nada acá.
+        // Aditivo: los campos viejos intactos + los nuevos. No quitar nada.
         res = await handleSync(env.DB);
       } else if (method === 'GET' && path === '/api/v1/sync/v2') {
         res = await handleSyncV2(env.DB);

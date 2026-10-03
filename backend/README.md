@@ -65,9 +65,12 @@ Lista n    = round(costo_neto × (1 + IVA/100) × factor_n)
 ```
 
 Nada se descarta: `costo_neto`, `costo_iva` y las 4 listas viven en la fila
-(`products` tiene 10 columnas). `categoria` y `fabrica` se persisten pero **no**
-se envían en el sync. IVA y factores son configurables (CLI `--iva`,
-`--listas`…; UI en `pages/`).
+(`products` tiene 12 columnas). Además de `categoria` y `fabrica`, la fila
+guarda `codigo` (código de fábrica/comercial, ej. `"404 / 425"`) y `oferta`
+(0/1; si es oferta, las 4 listas iguales al precio de oferta). Esos dos campos
+**solo viajan en v2** (modo `predeterminado`): el sync v1 es contrato
+congelado. IVA y factores son configurables (CLI `--iva`, `--listas`…; UI en
+`pages/`).
 
 ## Sync (por HASH, catálogo completo)
 
@@ -78,8 +81,11 @@ se envían en el sync. IVA y factores son configurables (CLI `--iva`,
    → el cliente reemplaza su base local
 ```
 
-- **`GET /api/v1/sync` (v1)** → **contrato CONGELADO**: `{ codigo_unico,
-  nombre, precios[4] }`. Las apps viejas siguen hablando este idioma. No se toca.
+- **`GET /api/v1/sync` (v1)** → contrato **ADITIVO**: los campos viejos
+  `{ codigo_unico, nombre, precios[4] }` siguen byte idénticos (Android los
+  exige) y se les AGREGAN `fabrica`, `codigo`, `descripcion`, `costo_neto`,
+  `oferta`. Los clientes viejos ignoran lo nuevo; los nuevos dejan de
+  adivinar (4 precios iguales → leer `oferta`).
 - **`GET /api/v1/sync/v2`** → contrato nuevo, la forma depende de
   `config.sync_mode` (ver abajo).
 
@@ -93,8 +99,8 @@ La fila `config.sync_mode` define cómo responde `/api/v1/sync/v2`:
 
 | Modo | `GET /api/v1/sync/v2` devuelve por producto |
 |------|----------------------------------------------|
-| `predeterminado` (default) | `{ codigo_unico, descripcion, precios[4], categoria, fabrica }` |
-| `descripcion-costos` | `{ descripcion, costo }` (`costo` = `costo_neto`; sin listas, sin categoría, sin fábrica) |
+| `predeterminado` (default) | **Todos los campos de la fila**: `{ codigo_unico, descripcion, precios[4], categoria, fabrica, codigo, oferta, costo_neto, costo_iva, updated_at }` |
+| `descripcion-costos` | `{ descripcion, costo }` (`costo` = `costo_neto`; sin listas, sin categoría, sin fábrica, sin código, sin oferta) |
 
 Se lee con `GET /api/v1/sync-config` (libre) y se escribe con
 `POST /api/v1/admin/sync-config { modo }` (JWT). **No versiona el catálogo**
@@ -180,6 +186,11 @@ npm run db:migrate        # producción
 npm run db:reset:local    # dev
 npm run db:reset          # producción
 
+# 5b) REGENERAR solo el catálogo (borra products + backups, conserva auth y
+#     config, recrea con el esquema vigente — después volvé a subir el Excel)
+npm run db:recreate:local # dev
+npm run db:recreate       # producción
+
 # 6) Secrets de admin (JWT)
 #    Local: creá backend/.dev.vars con
 #      ADMIN_USER=admin
@@ -203,7 +214,7 @@ npm run deploy   # producción
 | Método | Ruta | Auth | Qué hace |
 |--------|-----|------|----------|
 | GET | `/api/v1/version` | libre | `{ revision, hash }` |
-| GET | `/api/v1/sync` | libre | Catálogo completo — **v1 congelado** |
+| GET | `/api/v1/sync` | libre | Catálogo completo — **v1 aditivo** (viejos + campos nuevos) |
 | GET | `/api/v1/sync/v2` | libre | Catálogo completo — contrato nuevo según `sync_mode` |
 | GET | `/api/v1/sync-config` | libre | `{ modo, opciones }` |
 | GET | `/api/v1/mapa-catalogo` | libre | Mapa para el editor de fotos (sde11) |
@@ -258,13 +269,21 @@ curl http://localhost:8787/api/v1/sync
     {
       "codigo_unico": "BAK2000",
       "nombre": "BAKHOU 2000 LISO ALGODON HOMBRE",
-      "precios": [1200, 1100, 1000, 900]
+      "precios": [1200, 1100, 1000, 900],
+      "fabrica": "BAKHOU",
+      "codigo": "2103",
+      "descripcion": "BAKHOU 2000 LISO ALGODON HOMBRE",
+      "costo_neto": 517.02,
+      "oferta": false
     }
   ]
 }
 ```
 
 `precios` = `[L1, L2, L3, L4]` (Lista 1 a 4, enteros redondeados).
+`nombre` y `descripcion` son la misma cadena con dos claves (compatibilidad).
+`oferta: true` ⇒ las 4 listas vienen iguales en `precios` — confiar en el
+campo, no en la comparación.
 
 ### GET /api/v1/sync/v2
 
@@ -290,7 +309,12 @@ Modo `predeterminado` (default):
       "descripcion": "BAKHOU 2000 LISO ALGODON HOMBRE",
       "precios": [1200, 1100, 1000, 900],
       "categoria": "",
-      "fabrica": "BAKHOU"
+      "fabrica": "BAKHOU",
+      "codigo": "2103",
+      "oferta": false,
+      "costo_neto": 517.02,
+      "costo_iva": 625.6,
+      "updated_at": "2026-10-02 21:03:11"
     }
   ]
 }
@@ -310,7 +334,7 @@ Modo `descripcion-costos`:
 ```
 
 `costo` = `costo_neto` (sin IVA). En este modo no hay listas, costo+IVA,
-categoría ni fábrica.
+categoría, fábrica, código ni oferta.
 
 ### GET /api/v1/sync-config
 
@@ -610,17 +634,19 @@ curl -X POST http://localhost:8787/api/v1/admin/rehash \
 | `categorias` | Taxonomía (reservada, pendiente de poblar) |
 | `producto_categoria` | Relación producto → categoría |
 
-### Columnas de `products` (y sus backups — 10 columnas, idénticas)
+### Columnas de `products` (y sus backups — 12 columnas, idénticas)
 
 | Columna | Tipo | Descripción |
 |---------|------|-------------|
 | `codigo_unico` | TEXT PK | Identidad estable del producto |
+| `fabrica` | TEXT | Se envía en v2 (`predeterminado`) |
+| `codigo` | TEXT | Código de fábrica/comercial (`"404 / 425"`). **No** es identidad |
 | `descripcion` | TEXT | Nombre completo (antes `nombre`) |
 | `costo_neto` | REAL | Sin IVA: `L4 / (1,50 × 1,21)` |
 | `costo_iva` | REAL | Costo + IVA: `L4 / 1,50` |
 | `lista1` … `lista4` | REAL | Las 4 listas |
-| `categoria` | TEXT | Se persiste, **no** se sincroniza |
-| `fabrica` | TEXT | Se persiste, **no** se sincroniza |
+| `categoria` | TEXT | Rubro del producto (**no** confundir con `oferta`) |
+| `oferta` | INTEGER 0/1 | En oferta → las 4 listas iguales al precio de oferta |
 | `updated_at` | TEXT | `datetime('now')` |
 
 `metadata`: `key`, `revision_number`, `catalog_hash`, `backup_state`, `updated_at`.
