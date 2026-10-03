@@ -239,6 +239,8 @@ code { background: var(--surface-2); padding: 1px 6px; border-radius: 5px; }
   white-space: nowrap;
 }
 .precio-chip b { color: var(--muted); font-weight: 700; margin-right: 3px; }
+.precio-chip.costo { background: rgba(0, 212, 168, 0.10); border-color: rgba(0, 212, 168, 0.35); }
+.precio-chip.costo b { color: var(--accent-2); }
 
 .inv-acc { display: flex; gap: 2px; }
 .inv-acc .btn { padding: 7px 9px; font-size: 14px; line-height: 1; }
@@ -288,6 +290,10 @@ code { background: var(--surface-2); padding: 1px 6px; border-radius: 5px; }
 .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 .grid4 .field { margin-bottom: 12px; }
 #edCodigo { font-family: ui-monospace, "Cascadia Mono", monospace; color: var(--accent-2); }
+.lista-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.lista-field .field { margin-bottom: 0; }
+.lista-field .btn-recalc { width: 100%; padding: 5px 0; font-size: 12.5px; font-weight: 700; letter-spacing: 0.08em; }
+.recalc-cap { font-size: 10px; color: var(--muted); text-align: center; letter-spacing: 0.04em; }
 .chk { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text); min-height: 34px; }
 .chk input { width: auto; accent-color: var(--accent); }
 

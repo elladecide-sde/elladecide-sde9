@@ -707,6 +707,8 @@ async function cargarInventario() {
         codigo_unico: String(p.codigo_unico ?? ''),
         descripcion: String(p.descripcion ?? ''),
         precios: Array.isArray(p.precios) ? p.precios : [],
+        costo_neto: Number(p.costo_neto) || 0,
+        costo_iva: Number(p.costo_iva) || 0,
         categoria: p.categoria || '',
         fabrica: p.fabrica || '',
         codigo: p.codigo || '',
@@ -724,6 +726,8 @@ async function cargarInventario() {
         codigo_unico: String(p.codigo_unico ?? ''),
         descripcion: String(p.nombre ?? ''),
         precios: Array.isArray(p.precios) ? p.precios : [],
+        costo_neto: Number(p.costo_neto) || 0,
+        costo_iva: 0, // el contrato v1 no expone costo+IVA
         categoria: '',
         fabrica: '',
         codigo: '',
@@ -796,6 +800,17 @@ function filaInventario(p) {
 
   const precios = document.createElement('div');
   precios.className = 'inv-precios';
+  const fmtCosto = (n) => Number(n).toLocaleString('es-AR', { maximumFractionDigits: 2 });
+  const chipCosto = (label, valor) => {
+    const chip = document.createElement('span');
+    chip.className = 'precio-chip costo';
+    const b = document.createElement('b');
+    b.textContent = label;
+    chip.append(b, document.createTextNode(valor));
+    return chip;
+  };
+  if (Number(p.costo_neto) > 0) precios.appendChild(chipCosto('Costo neto', fmtCosto(p.costo_neto)));
+  if (Number(p.costo_iva) > 0) precios.appendChild(chipCosto('Costo+IVA', fmtCosto(p.costo_iva)));
   (p.precios || []).forEach((n, i) => {
     const chip = document.createElement('span');
     chip.className = 'precio-chip';
@@ -895,17 +910,73 @@ function setEdStatus(msg, ok) {
 
 const edPrecios = () => [1, 2, 3, 4].map((i) => Number($(`edL${i}`).value));
 
-function pintarCostoEdicion() {
-  const l4 = Number($('edL4').value);
-  if (!Number.isFinite(l4) || l4 <= 0) { $('edCosto').textContent = ''; return; }
-  const c = calcularPrecios(l4);
-  const fmt = (n) => Number(n).toLocaleString('es-AR', { maximumFractionDigits: 2 });
-  $('edCosto').textContent =
-    `Costo neto ≈ ${fmt(c.costo_neto)} · Costo + IVA ≈ ${fmt(c.costo_iva)} ` +
-    `(IVA ${CFG.iva}% · inversa ${CFG.inversaLista}%)`;
+// "SIN FABRICA" es un GRUPO del parser (descripciones sin marca detectada),
+// no una fábrica: jamás se guarda como valor de `fabrica`.
+const esFabricaSintetica = (f) => String(f || '').trim().toUpperCase() === 'SIN FABRICA';
+
+// ── Costos en el modal: neto ⇄ IVA, editables, precisión completa ───────────
+// El INPUT muestra 2 decimales; la verdad vive en las variables (así un artículo
+// sin edición no se redondea al guardar). `edCostoManual` protege el costo
+// editado a mano de que la L4 lo pise al tipear.
+let edCostoManual = false;
+let edCostoNeto = 0;
+let edCostoIva = 0;
+
+const costoFmt = (n) => (Number.isFinite(n) && n > 0 ? (Math.round(n * 100) / 100).toFixed(2) : '');
+
+function pintarCostosEdicion() {
+  $('edCostoNeto').value = costoFmt(edCostoNeto);
+  $('edCostoIva').value = costoFmt(edCostoIva);
 }
 
-$('edL4').addEventListener('input', pintarCostoEdicion);
+// El vínculo entre ambos campos es el IVA de la config: neto × (1 + IVA) = IVA.
+$('edCostoNeto').addEventListener('input', () => {
+  edCostoManual = true;
+  edCostoNeto = Number($('edCostoNeto').value);
+  edCostoIva = edCostoNeto > 0 ? edCostoNeto * (1 + CFG.iva / 100) : 0;
+  $('edCostoIva').value = costoFmt(edCostoIva);
+});
+
+$('edCostoIva').addEventListener('input', () => {
+  edCostoManual = true;
+  edCostoIva = Number($('edCostoIva').value);
+  edCostoNeto = edCostoIva > 0 ? edCostoIva / (1 + CFG.iva / 100) : 0;
+  $('edCostoNeto').value = costoFmt(edCostoNeto);
+});
+
+// Tocar la L4 sigue derivando los costos… salvo que el usuario los haya
+// editado a mano: en ese caso el costo manda y la L4 no lo pisa.
+$('edL4').addEventListener('input', () => {
+  if (edCostoManual) return;
+  const l4 = Number($('edL4').value);
+  if (!Number.isFinite(l4) || l4 <= 0) return;
+  const c = calcularPrecios(l4);
+  edCostoNeto = c.costo_neto;
+  edCostoIva = c.costo_iva;
+  pintarCostosEdicion();
+});
+
+/**
+ * Lista n calculada DESDE el costo neto vigente (espejo de `calcularPrecios`,
+ * pero con el costo como entrada). En oferta mandan las 4: todas quedan en el
+ * valor de la L4 (factor inversa), igual que en el resto del panel.
+ */
+function listaDesdeCosto(n) {
+  const cfg = cfgFormula(CFG);
+  const enOferta = esOferta($('edDesc').value) || $('edOferta').checked;
+  const factor = cfg.listas[enOferta ? 3 : n - 1];
+  return Math.round(edCostoNeto * (1 + cfg.iva / 100) * factor);
+}
+
+// R por lista: recalcular ESA lista desde el costo (title "recalcular" +
+// leyenda visible debajo del botón).
+[1, 2, 3, 4].forEach((n) => {
+  $(`edRL${n}`).addEventListener('click', () => {
+    if (!(edCostoNeto > 0)) { setEdStatus('Cargá un costo neto > 0 (o una L4 válida) para recalcular', false); return; }
+    $(`edL${n}`).value = listaDesdeCosto(n);
+    setEdStatus(`↺ L${n} recalculada desde el costo — guardá para aplicar`, true);
+  });
+});
 
 function abrirEdicion(p) {
   $('edCodigo').value = p.codigo_unico;
@@ -913,11 +984,28 @@ function abrirEdicion(p) {
   (p.precios || []).slice(0, 4).forEach((n, i) => { $(`edL${i + 1}`).value = n; });
   for (let i = (p.precios || []).length; i < 4; i++) $(`edL${i + 1}`).value = '';
   $('edCat').value = p.categoria || '';
-  $('edFab').value = p.fabrica || '';
+  $('edFab').value = esFabricaSintetica(p.fabrica) ? '' : (p.fabrica || '');
   $('edCodFab').value = p.codigo || '';
   $('edOferta').checked = !!p.oferta;
+
+  // Costos: mandan los GUARDADOS; si el artículo no trae, se derivan de la L4.
+  edCostoManual = false;
+  const guardado = Number(p.costo_neto);
+  const l4 = Number($('edL4').value);
+  if (Number.isFinite(guardado) && guardado > 0) {
+    edCostoNeto = guardado;
+    edCostoIva = Number(p.costo_iva) > 0 ? Number(p.costo_iva) : guardado * (1 + CFG.iva / 100);
+  } else if (Number.isFinite(l4) && l4 > 0) {
+    const c = calcularPrecios(l4);
+    edCostoNeto = c.costo_neto;
+    edCostoIva = c.costo_iva;
+  } else {
+    edCostoNeto = 0;
+    edCostoIva = 0;
+  }
+  pintarCostosEdicion();
+
   setEdStatus('', true);
-  pintarCostoEdicion();
   $('editModal').hidden = false;
   $('edDesc').focus();
   $('edDesc').select();
@@ -934,21 +1022,16 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !$('editModal').hidden) cerrarEdicion();
 });
 
-/** Recalcula L1..L3 desde la L4 con la config actual (o las 4 iguales si es oferta). */
+/** Recalcula L1..L3 desde el costo vigente (las 4 iguales si es oferta). */
 $('edRecalc').addEventListener('click', () => {
-  const l4 = Number($('edL4').value);
-  if (!Number.isFinite(l4) || l4 <= 0) { setEdStatus('La L4 tiene que ser un número > 0', false); return; }
-  const c = calcularPrecios(l4);
+  if (!(edCostoNeto > 0)) { setEdStatus('Cargá un costo neto > 0 (o una L4 válida) para recalcular', false); return; }
   if (esOferta($('edDesc').value) || $('edOferta').checked) {
-    for (let i = 1; i <= 4; i++) $(`edL${i}`).value = Math.round(l4);
+    const l4 = listaDesdeCosto(4);
+    for (let i = 1; i <= 4; i++) $(`edL${i}`).value = l4;
   } else {
-    $('edL1').value = c.precios[0];
-    $('edL2').value = c.precios[1];
-    $('edL3').value = c.precios[2];
-    $('edL4').value = Math.round(l4);
+    for (let i = 1; i <= 3; i++) $(`edL${i}`).value = listaDesdeCosto(i);
   }
-  pintarCostoEdicion();
-  setEdStatus('↺ Listas recalculadas con la configuración actual — guardá para aplicar', true);
+  setEdStatus('↺ Listas recalculadas desde el costo — guardá para aplicar', true);
 });
 
 // Tildar Oferta = la regla "la oferta manda los precios": las 4 listas quedan
@@ -958,7 +1041,6 @@ $('edOferta').addEventListener('change', () => {
   const l4 = Number($('edL4').value);
   if (!Number.isFinite(l4) || l4 <= 0) return;
   for (let i = 1; i <= 4; i++) $(`edL${i}`).value = Math.round(l4);
-  pintarCostoEdicion();
   setEdStatus('🔥 En oferta: las 4 listas quedaron iguales a la L4 — guardá para aplicar', true);
 });
 
@@ -978,9 +1060,17 @@ $('edGuardar').addEventListener('click', async () => {
     codigo: $('edCodFab').value.trim(),
     oferta: $('edOferta').checked,
   };
-  const c = calcularPrecios(l[3]);
-  producto.costo_neto = c.costo_neto;
-  producto.costo_iva = c.costo_iva;
+  // El costo es dato EDITABLE: se manda tal cual (precisión completa). Solo se
+  // deriva de la L4 si quedó vacío/inválido (nunca dejar costos en 0).
+  let neto = edCostoNeto;
+  let iva = edCostoIva;
+  if (!(neto > 0) || !(iva > 0)) {
+    const c = calcularPrecios(l[3]);
+    neto = c.costo_neto;
+    iva = c.costo_iva;
+  }
+  producto.costo_neto = neto;
+  producto.costo_iva = iva;
 
   try {
     setEdStatus('Guardando…', true);
@@ -1162,7 +1252,11 @@ async function analizarInventario() {
       if (!Number.isFinite(precios[3]) || precios[3] <= 0) { sinPrecios++; return; }
       const oferta = !!(p.oferta || x.oferta);
       const finales = oferta ? Array(4).fill(precios[3]) : precios; // la oferta manda los precios
-      const c = calcularPrecios(finales[3]);
+      // Los costos GUARDADOS se preservan (el usuario puede haberlos editado
+      // a mano): solo se derivan de la L4 si el artículo no trae costo.
+      const netoGuardado = Number(p.costo_neto);
+      const conCosto = Number.isFinite(netoGuardado) && netoGuardado > 0;
+      const c = conCosto ? null : calcularPrecios(finales[3]);
       adminPendientes.push({
         i,
         conDuda: it.revisar,
@@ -1171,11 +1265,13 @@ async function analizarInventario() {
           descripcion: p.descripcion,
           precios: finales,
           categoria: p.categoria || '',
-          fabrica: fabCargada || it.fabrica,
+          fabrica: fabCargada || (it.sinFabrica ? '' : it.fabrica),
           codigo: codCargado || x.codigo,
           oferta,
-          costo_neto: c.costo_neto,
-          costo_iva: c.costo_iva,
+          costo_neto: conCosto ? netoGuardado : c.costo_neto,
+          costo_iva: conCosto
+            ? (Number(p.costo_iva) > 0 ? Number(p.costo_iva) : netoGuardado * (1 + CFG.iva / 100))
+            : c.costo_iva,
         },
       });
     });
@@ -1214,7 +1310,7 @@ $('adminAplicar').addEventListener('click', async () => {
     '· Se completan fábricas y códigos que faltan (los ya cargados no se tocan).\n' +
     '· Las ofertas detectadas igualan las 4 listas a la L4 (la oferta manda los precios).\n' +
     (dudas ? `· ${dudas} tienen confianza baja (⚠️ en la tabla).\n` : '') +
-    '· Los costos se recalculan con la configuración actual (igual que al editar).\n\n' +
+    '· Los costos ya guardados se conservan; si faltan, se derivan de la L4 con la configuración actual.\n\n' +
     'Sube la revisión: todas las apps se resincronizan solas.',
   );
   if (!seguro) return;

@@ -30,13 +30,16 @@ El panel es una SPA con 4 tabs (visibles solo con sesión iniciada):
      "express" pega en "espresso", "cafetra" en "cafetera";
   3. si no, el token descarta el artículo.
 - Las filas muestran categoría · fábrica · código y, si está en oferta, el tag
-  🔥 OFERTA.
-- **Editar** → modal con descripción, L1..L4, categoría, fábrica, **código de
-  fábrica** y checkbox **Oferta**. Tildar Oferta iguala las 4 listas a la L4
-  (la oferta manda los precios). Los costos se derivan de la L4 con la config de
-  precios actual y se guardan con `POST /api/v1/admin/products`
+  🔥 OFERTA; además los chips **Costo neto** y **Costo+IVA**.
+- **Editar** → modal con descripción, **Costo neto** y **Costo + IVA**
+  editables (cada campo manda sobre el otro con el IVA de la config), L1..L4
+  con un botón **R** por lista (recalcula ESA lista desde el costo; title
+  `recalcular` + leyenda debajo), categoría, fábrica, **código de fábrica** y
+  checkbox **Oferta**. Tildar Oferta iguala las 4 listas a la L4 (la oferta
+  manda los precios). Los costos se guardan con `POST /api/v1/admin/products`
   (**upsert parcial**, sin `replace`).
-  Botón "Recalcula L1..L3 desde la L4".
+  Botón "↺ Recalcular L1..L3 desde el costo". Tocar la L4 sigue derivando los
+  costos, salvo que se hayan editado a mano (ahí manda el costo).
 - **Eliminar** → `DELETE /api/v1/admin/products/:codigo_unico`.
 - Ambas acciones suben la revisión: las apps se resincronizan solas.
 - Si el modo de sync es `descripcion-costos`, v2 no trae código ni metadatos →
@@ -56,10 +59,13 @@ React). `index.html` lo carga con un `<script type="module">` que lo expone en
   confianza baja salen marcadas con ⚠️.
 - **✅ Completar** → `POST /api/v1/admin/products` (upsert parcial) con los
   artículos a los que les falta **fábrica y/o código**; nunca pisa lo ya
-  cargado. Las ofertas detectadas igualan las 4 listas a la L4 (la oferta manda
-  los precios). Sube la revisión: las apps se resincronizan solas. Bloqueado si
-  el modo de sync es `descripcion-costos` (v1 no trae categoría → se pisaría con
-  vacío).
+  cargado y **jamás guarda `SIN FABRICA`** como fábrica (es un grupo del
+  parser: esos artículos quedan con la fábrica que ya tengan, vacía si no
+  tienen). Las ofertas detectadas igualan las 4 listas a la L4 (la oferta manda
+  los precios) y **los costos ya guardados se conservan** (solo se derivan de
+  la L4 si faltan). Sube la revisión: las apps se resincronizan solas.
+  Bloqueado si el modo de sync es `descripcion-costos` (v1 no trae categoría →
+  se pisaría con vacío).
 
 ## Generación y subida
 

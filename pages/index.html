@@ -197,7 +197,9 @@
           <strong>fábrica</strong>, <strong>código</strong>, <strong>descripción</strong> y
           <strong>oferta</strong> de cada fila. Primero revisá el resultado y después aplicá
           las fábricas detectadas: <strong>solo completa las que están vacías</strong>, nunca
-          pisa una fábrica ya cargada.
+          pisa una fábrica ya cargada. El grupo <strong>SIN FABRICA</strong> (descripciones sin
+          marca detectada) <strong>no se guarda como fábrica</strong>: esos artículos quedan con
+          la fábrica que ya tengan.
         </p>
         <div class="actions">
           <button id="adminAnalizar" class="btn secondary" type="button">🔍 Analizar inventario</button>
@@ -226,14 +228,35 @@
       <label class="field"><span>Código único</span><input type="text" id="edCodigo" readonly></label>
       <label class="field"><span>Descripción</span><input type="text" id="edDesc" autocomplete="off"></label>
 
+      <div class="grid2">
+        <label class="field"><span>Costo neto</span><input type="number" id="edCostoNeto" min="0" step="0.01"></label>
+        <label class="field"><span>Costo + IVA</span><input type="number" id="edCostoIva" min="0" step="0.01"></label>
+      </div>
+
       <div class="grid4">
-        <label class="field">L1 <input type="number" id="edL1" min="0" step="1"></label>
-        <label class="field">L2 <input type="number" id="edL2" min="0" step="1"></label>
-        <label class="field">L3 <input type="number" id="edL3" min="0" step="1"></label>
-        <label class="field">L4 <input type="number" id="edL4" min="0" step="1"></label>
+        <div class="lista-field">
+          <label class="field">L1 <input type="number" id="edL1" min="0" step="1"></label>
+          <button class="btn ghost btn-recalc" id="edRL1" type="button" title="recalcular">R</button>
+          <span class="recalc-cap">recalcular</span>
+        </div>
+        <div class="lista-field">
+          <label class="field">L2 <input type="number" id="edL2" min="0" step="1"></label>
+          <button class="btn ghost btn-recalc" id="edRL2" type="button" title="recalcular">R</button>
+          <span class="recalc-cap">recalcular</span>
+        </div>
+        <div class="lista-field">
+          <label class="field">L3 <input type="number" id="edL3" min="0" step="1"></label>
+          <button class="btn ghost btn-recalc" id="edRL3" type="button" title="recalcular">R</button>
+          <span class="recalc-cap">recalcular</span>
+        </div>
+        <div class="lista-field">
+          <label class="field">L4 <input type="number" id="edL4" min="0" step="1"></label>
+          <button class="btn ghost btn-recalc" id="edRL4" type="button" title="recalcular">R</button>
+          <span class="recalc-cap">recalcular</span>
+        </div>
       </div>
       <div class="actions" style="margin-top:0">
-        <button id="edRecalc" class="btn ghost" type="button">↺ Recalcular L1..L3 desde la L4</button>
+        <button id="edRecalc" class="btn ghost" type="button">↺ Recalcular L1..L3 desde el costo</button>
       </div>
 
       <div class="grid2">
@@ -248,10 +271,10 @@
         </label>
       </div>
 
-      <p class="hint" id="edCosto"></p>
-      <p class="hint">Los costos (neto y con IVA) se derivan de la L4 con la
-        <strong>configuración actual de precios</strong> de Configuración. Subir el
-        artículo cambia la revisión: <strong>las apps se resincronizan solas</strong>.</p>
+      <p class="hint">Los costos se editan a mano (cada campo manda sobre el otro con el
+        <strong>IVA de Configuración</strong>): un <strong>R</strong> recalcula una lista desde el costo y
+        <strong>↺ Recalcular L1..L3</strong> hace las tres de una vez (si es oferta, las 4 quedan iguales).
+        Subir el artículo cambia la revisión: <strong>las apps se resincronizan solas</strong>.</p>
 
       <div class="actions">
         <button id="edGuardar" class="btn primary" type="button">💾 Guardar</button>
