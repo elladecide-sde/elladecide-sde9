@@ -1200,10 +1200,13 @@ $('edGuardar').addEventListener('click', async () => {
 
 // ── Eliminación de un artículo ──────────────────────────────────────────────
 async function borrarProducto(p) {
-  const seguro = confirm(
-    `¿Eliminar "${p.descripcion}" (${p.codigo_unico})?\n\n` +
-    'Se baja del catálogo activo y sube la revisión: todas las apps se resincronizan solas.',
-  );
+  const seguro = await mostrarConfirmacion({
+    titulo: `¿Eliminar "${p.descripcion}"?`,
+    mensaje: `Código único: ${p.codigo_unico}. Se bajará del catálogo activo y subirá la revisión (las apps se resincronizan solas).`,
+    icono: '🗑️',
+    textoOk: 'Eliminar del catálogo',
+    danger: true,
+  });
   if (!seguro) return;
   try {
     setInvStatus(`Eliminando ${p.codigo_unico}…`, true);
@@ -1555,6 +1558,31 @@ document.querySelectorAll('#parserSubtabs .subtab').forEach((btn) => {
   });
 });
 
+// ── Dialog de confirmación moderno ──────────────────────────────────────────
+function mostrarConfirmacion({ titulo = '¿Confirmar acción?', mensaje = 'Esta acción no se puede deshacer.', icono = '⚠️', textoOk = 'Confirmar', danger = true } = {}) {
+  const dlg = $('confirmDialog');
+  $('confirmTitle').textContent = titulo;
+  $('confirmMsg').textContent = mensaje;
+  $('confirmIcon').textContent = icono;
+  const btnOk = $('confirmBtnOk');
+  btnOk.textContent = textoOk;
+  btnOk.className = danger ? 'btn danger' : 'btn primary';
+
+  return new Promise((resolve) => {
+    const handleOk = () => { cleanup(); dlg.close(); resolve(true); };
+    const handleCancel = () => { cleanup(); dlg.close(); resolve(false); };
+    const cleanup = () => {
+      btnOk.removeEventListener('click', handleOk);
+      $('confirmBtnCancel').removeEventListener('click', handleCancel);
+    };
+
+    btnOk.addEventListener('click', handleOk);
+    $('confirmBtnCancel').addEventListener('click', handleCancel);
+    if (typeof dlg.showModal === 'function') dlg.showModal();
+    else resolve(confirm(mensaje));
+  });
+}
+
 // 1. Fábricas
 function renderTablaFabricas() {
   const tbody = $('tbodyFabricas');
@@ -1573,7 +1601,7 @@ function renderTablaFabricas() {
     tr.innerHTML = `
       <td><input type="text" value="${nombre.replace(/"/g, '&quot;')}" data-idx="${idx}" data-field="nombre" style="font-weight:600"></td>
       <td><input type="text" value="${aliases.replace(/"/g, '&quot;')}" data-idx="${idx}" data-field="alias" placeholder="ALIAS1, ALIAS2…"></td>
-      <td style="text-align: center;"><button type="button" class="btn ghost btn-del-fab" data-idx="${idx}" title="Eliminar">🗑️</button></td>
+      <td style="text-align: center;"><button type="button" class="btn ghost btn-del-fab" data-idx="${idx}" title="Eliminar fábrica">🗑️</button></td>
     `;
     tbody.appendChild(tr);
   });
@@ -1595,30 +1623,46 @@ $('tbodyFabricas').addEventListener('input', (e) => {
   aplicarConfiguracionEnMemoria();
 });
 
-$('tbodyFabricas').addEventListener('click', (e) => {
+$('tbodyFabricas').addEventListener('click', async (e) => {
   const btn = e.target.closest('.btn-del-fab');
   if (!btn) return;
   const idx = Number(btn.dataset.idx);
   const f = parserCfgData.fabricas[idx];
-  if (!confirm(`¿Eliminar la fábrica "${f.nombre}"?`)) return;
+  const ok = await mostrarConfirmacion({
+    titulo: `¿Eliminar "${f.nombre}"?`,
+    mensaje: 'Se quitará del diccionario local de fábricas reconocidas.',
+    icono: '🗑️',
+    textoOk: 'Eliminar',
+    danger: true,
+  });
+  if (!ok) return;
   parserCfgData.fabricas.splice(idx, 1);
   aplicarConfiguracionEnMemoria();
   renderParserConfigUI();
+  setParserCfgStatus(`Fábrica "${f.nombre}" eliminada.`, true);
 });
 
 $('btnNuevaFabrica').addEventListener('click', () => {
-  const n = prompt('Nombre canónico de la nueva fábrica (ej: NUEVA MARCA):');
-  if (!n || !n.trim()) return;
-  const nombre = n.trim().toUpperCase();
-  if (parserCfgData.fabricas.some((f) => f.nombre === nombre)) {
-    alert(`La fábrica "${nombre}" ya existe.`);
+  const inputNombre = $('nuevaFabNombre');
+  const inputAlias = $('nuevaFabAlias');
+  const nombre = inputNombre.value.trim().toUpperCase();
+  if (!nombre) {
+    inputNombre.focus();
     return;
   }
-  parserCfgData.fabricas.unshift({ nombre, alias: [] });
+  if (parserCfgData.fabricas.some((f) => f.nombre === nombre)) {
+    setParserCfgStatus(`La fábrica "${nombre}" ya existe en la lista.`, false);
+    inputNombre.focus();
+    return;
+  }
+  const alias = inputAlias.value.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+  parserCfgData.fabricas.unshift({ nombre, alias });
   aplicarConfiguracionEnMemoria();
+  inputNombre.value = '';
+  inputAlias.value = '';
   $('filtroFabricas').value = '';
   renderParserConfigUI();
-  setParserCfgStatus(`Fábrica "${nombre}" agregada. Guardá para sincronizar.`, true);
+  setParserCfgStatus(`✅ Fábrica "${nombre}" agregada al catálogo. Guardá para sincronizar en la nube.`, true);
 });
 
 // 2. Fábricas al final
@@ -1822,8 +1866,15 @@ $('btnGuardarParserCfg').addEventListener('click', async () => {
 });
 
 // Reset a defaults
-$('btnResetParserCfg').addEventListener('click', () => {
-  if (!confirm('¿Restaurar todas las reglas y fábricas a los valores por defecto del sistema?')) return;
+$('btnResetParserCfg').addEventListener('click', async () => {
+  const ok = await mostrarConfirmacion({
+    titulo: '¿Restaurar reglas a defaults?',
+    mensaje: 'Se reestablecerán todas las fábricas, sufijos, palabras y ofertas originales en memoria.',
+    icono: '↺',
+    textoOk: 'Restaurar',
+    danger: true,
+  });
+  if (!ok) return;
   parserCfgData = inicializarParserDefaults();
   aplicarConfiguracionEnMemoria();
   renderParserConfigUI();

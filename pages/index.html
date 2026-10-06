@@ -238,17 +238,29 @@
 
         <!-- Panel 1: Fábricas -->
         <div class="subpanel" id="subpanel-fabricas">
+          <!-- Formulario inline para agregar nueva fábrica -->
+          <div class="inline-add-card">
+            <div class="inline-add-title">➕ Nueva Fábrica / Marca</div>
+            <div class="cols-add-fab">
+              <input type="text" id="nuevaFabNombre" placeholder="Nombre canónico (ej: LADY GENNY)" autocomplete="off">
+              <input type="text" id="nuevaFabAlias" placeholder="Aliases opcionales separados por coma (ej: LADY, GENNY)" autocomplete="off">
+              <button id="btnNuevaFabrica" class="btn primary" type="button">➕ Agregar</button>
+            </div>
+          </div>
+
           <div class="subpanel-bar">
-            <input type="search" id="filtroFabricas" placeholder="Filtrar fábricas por nombre o alias…">
-            <button id="btnNuevaFabrica" class="btn secondary" type="button">➕ Agregar fábrica</button>
+            <div class="search-mini">
+              <span class="search-mini-ico">🔍</span>
+              <input type="search" id="filtroFabricas" placeholder="Filtrar por nombre o alias…">
+            </div>
           </div>
           <div class="table-wrap">
             <table class="config-table" id="tablaFabricas">
               <thead>
                 <tr>
-                  <th style="width: 35%">Nombre Canónico</th>
-                  <th style="width: 50%">Aliases (separados por coma)</th>
-                  <th style="width: 15%; text-align: center;">Acción</th>
+                  <th style="width: 32%">Nombre Canónico</th>
+                  <th style="width: 54%">Aliases (separados por coma)</th>
+                  <th style="width: 14%; text-align: center;">Acción</th>
                 </tr>
               </thead>
               <tbody id="tbodyFabricas"></tbody>
@@ -466,6 +478,19 @@
           <button id="edCancelar" class="btn ghost" type="button">Cancelar</button>
           <button id="edGuardar" class="btn primary" type="button">💾 Guardar cambios</button>
         </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Dialog Nativo de Confirmación Elegante -->
+  <dialog class="modal-dialog compact" id="confirmDialog">
+    <div class="modal-container compact-box">
+      <div class="confirm-icon" id="confirmIcon">⚠️</div>
+      <h3 class="confirm-title" id="confirmTitle">¿Estás seguro?</h3>
+      <p class="confirm-msg" id="confirmMsg">Esta acción no se puede deshacer.</p>
+      <div class="confirm-actions">
+        <button id="confirmBtnCancel" class="btn ghost" type="button">Cancelar</button>
+        <button id="confirmBtnOk" class="btn danger" type="button">Confirmar</button>
       </div>
     </div>
   </dialog>
