@@ -787,58 +787,110 @@ function aplicarBusqueda() {
 
 function filaInventario(p) {
   const row = document.createElement('div');
-  row.className = 'inv-row';
+  row.className = 'inv-row' + (p.oferta ? ' is-oferta' : '');
   row.dataset.codigo = p.codigo_unico;
 
+  // Lado izquierdo: Código, descripción y pastillas
   const main = document.createElement('div');
   main.className = 'inv-main';
+
+  const metaRow = document.createElement('div');
+  metaRow.className = 'inv-meta-row';
+
   const code = document.createElement('span');
   code.className = 'inv-code';
   code.textContent = p.codigo_unico;
+  metaRow.appendChild(code);
+
+  if (p.fabrica && p.fabrica !== SIN_FABRICA) {
+    const fabBadge = document.createElement('span');
+    fabBadge.className = 'inv-badge fab';
+    fabBadge.textContent = p.fabrica;
+    metaRow.appendChild(fabBadge);
+  }
+
+  if (p.codigo) {
+    const codBadge = document.createElement('span');
+    codBadge.className = 'inv-badge cod';
+    codBadge.textContent = `#${p.codigo}`;
+    metaRow.appendChild(codBadge);
+  }
+
+  if (p.categoria) {
+    const catBadge = document.createElement('span');
+    catBadge.className = 'inv-badge cat';
+    catBadge.textContent = p.categoria;
+    metaRow.appendChild(catBadge);
+  }
+
+  if (p.oferta) {
+    const ofBadge = document.createElement('span');
+    ofBadge.className = 'inv-badge oferta';
+    ofBadge.textContent = '🔥 OFERTA';
+    metaRow.appendChild(ofBadge);
+  }
+
   const desc = document.createElement('span');
   desc.className = 'inv-desc';
   desc.textContent = p.descripcion;
-  const tags = document.createElement('span');
-  tags.className = 'inv-tags';
-  tags.textContent = [p.categoria, p.fabrica, p.codigo, p.oferta ? '🔥 OFERTA' : ''].filter(Boolean).join(' · ');
-  main.append(code, desc, tags);
 
+  main.append(metaRow, desc);
+
+  // Centro: Bloque de precios ordenado (L4 destacada + L1-L3 y costos)
   const precios = document.createElement('div');
-  precios.className = 'inv-precios';
-  const fmtCosto = (n) => Number(n).toLocaleString('es-AR', { maximumFractionDigits: 2 });
-  const chipCosto = (label, valor) => {
-    const chip = document.createElement('span');
-    chip.className = 'precio-chip costo';
-    const b = document.createElement('b');
-    b.textContent = label;
-    chip.append(b, document.createTextNode(valor));
-    return chip;
-  };
-  if (Number(p.costo_neto) > 0) precios.appendChild(chipCosto('Costo neto', fmtCosto(p.costo_neto)));
-  if (Number(p.costo_iva) > 0) precios.appendChild(chipCosto('Costo+IVA', fmtCosto(p.costo_iva)));
-  (p.precios || []).forEach((n, i) => {
-    const chip = document.createElement('span');
-    chip.className = 'precio-chip';
-    const b = document.createElement('b');
-    b.textContent = `L${i + 1}`;
-    chip.append(b, document.createTextNode(Number(n).toLocaleString('es-AR')));
-    precios.appendChild(chip);
-  });
+  precios.className = 'inv-precios-group';
 
+  const fmt = (n) => Number(n).toLocaleString('es-AR');
+  const fmtCosto = (n) => Number(n).toLocaleString('es-AR', { maximumFractionDigits: 2 });
+
+  // Precio principal (Lista 4)
+  const l4Val = (p.precios && p.precios[3]) || 0;
+  const l4Col = document.createElement('div');
+  l4Col.className = 'inv-price-main';
+  l4Col.innerHTML = `
+    <span class="price-label">Lista 4</span>
+    <span class="price-val">$${fmt(l4Val)}</span>
+  `;
+
+  // Precios secundarios (L1..L3)
+  const secCol = document.createElement('div');
+  secCol.className = 'inv-price-sec';
+  secCol.innerHTML = `
+    <span class="mini-pill" title="Lista 1">L1 <b>$${fmt(p.precios?.[0] || 0)}</b></span>
+    <span class="mini-pill" title="Lista 2">L2 <b>$${fmt(p.precios?.[1] || 0)}</b></span>
+    <span class="mini-pill" title="Lista 3">L3 <b>$${fmt(p.precios?.[2] || 0)}</b></span>
+  `;
+
+  // Costos compactos
+  const costCol = document.createElement('div');
+  costCol.className = 'inv-price-costos';
+  const cNeto = Number(p.costo_neto) > 0 ? `$${fmtCosto(p.costo_neto)}` : '—';
+  const cIva = Number(p.costo_iva) > 0 ? `$${fmtCosto(p.costo_iva)}` : '—';
+  costCol.innerHTML = `
+    <span class="cost-item">Neto: <b>${cNeto}</b></span>
+    <span class="cost-item">+IVA: <b>${cIva}</b></span>
+  `;
+
+  precios.append(l4Col, secCol, costCol);
+
+  // Lado derecho: Acciones claras
   const acc = document.createElement('div');
   acc.className = 'inv-acc';
+
   const bEdit = document.createElement('button');
   bEdit.type = 'button';
-  bEdit.className = 'btn ghost';
+  bEdit.className = 'btn-action edit';
   bEdit.dataset.accion = 'editar';
-  bEdit.textContent = '✏️';
-  bEdit.title = 'Editar';
+  bEdit.innerHTML = '✏️ <span class="btn-text">Editar</span>';
+  bEdit.title = 'Editar artículo';
+
   const bDel = document.createElement('button');
   bDel.type = 'button';
-  bDel.className = 'btn ghost';
+  bDel.className = 'btn-action delete';
   bDel.dataset.accion = 'borrar';
-  bDel.textContent = '🗑️';
-  bDel.title = 'Eliminar';
+  bDel.innerHTML = '🗑️';
+  bDel.title = 'Eliminar artículo';
+
   if (invSinMeta) {
     bEdit.disabled = true;
     bEdit.title = 'No disponible con el modo de sync actual (Configuración → modo)';
@@ -916,18 +968,33 @@ function setEdStatus(msg, ok) {
 const edPrecios = () => [1, 2, 3, 4].map((i) => Number($(`edL${i}`).value));
 
 // ── Costos en el modal: neto ⇄ IVA, editables, precisión completa ───────────
-// El INPUT muestra 2 decimales; la verdad vive en las variables (así un artículo
-// sin edición no se redondea al guardar). `edCostoManual` protege el costo
-// editado a mano de que la L4 lo pise al tipear.
 let edCostoManual = false;
 let edCostoNeto = 0;
 let edCostoIva = 0;
 
 const costoFmt = (n) => (Number.isFinite(n) && n > 0 ? (Math.round(n * 100) / 100).toFixed(2) : '');
 
+function calcularMargenesEnVivo() {
+  const neto = edCostoNeto > 0 ? edCostoNeto : 0;
+  [1, 2, 3, 4].forEach((n) => {
+    const val = Number($(`edL${n}`).value) || 0;
+    const badge = $(`marginL${n}`);
+    if (!badge) return;
+    if (neto > 0 && val > 0) {
+      const pct = Math.round(((val - neto) / neto) * 100);
+      badge.textContent = `${pct >= 0 ? '+' : ''}${pct}% neto`;
+      badge.className = `margin-badge ${pct >= 0 ? 'pos' : 'low'}`;
+    } else {
+      badge.textContent = '— %';
+      badge.className = 'margin-badge';
+    }
+  });
+}
+
 function pintarCostosEdicion() {
   $('edCostoNeto').value = costoFmt(edCostoNeto);
   $('edCostoIva').value = costoFmt(edCostoIva);
+  calcularMargenesEnVivo();
 }
 
 // El vínculo entre ambos campos es el IVA de la config: neto × (1 + IVA) = IVA.
@@ -936,6 +1003,7 @@ $('edCostoNeto').addEventListener('input', () => {
   edCostoNeto = Number($('edCostoNeto').value);
   edCostoIva = edCostoNeto > 0 ? edCostoNeto * (1 + CFG.iva / 100) : 0;
   $('edCostoIva').value = costoFmt(edCostoIva);
+  calcularMargenesEnVivo();
 });
 
 $('edCostoIva').addEventListener('input', () => {
@@ -943,11 +1011,12 @@ $('edCostoIva').addEventListener('input', () => {
   edCostoIva = Number($('edCostoIva').value);
   edCostoNeto = edCostoIva > 0 ? edCostoIva / (1 + CFG.iva / 100) : 0;
   $('edCostoNeto').value = costoFmt(edCostoNeto);
+  calcularMargenesEnVivo();
 });
 
-// Tocar la L4 sigue derivando los costos… salvo que el usuario los haya
-// editado a mano: en ese caso el costo manda y la L4 no lo pisa.
+// Tocar la L4 sigue derivando los costos… salvo que el usuario los haya editado a mano
 $('edL4').addEventListener('input', () => {
+  calcularMargenesEnVivo();
   if (edCostoManual) return;
   const l4 = Number($('edL4').value);
   if (!Number.isFinite(l4) || l4 <= 0) return;
@@ -955,6 +1024,10 @@ $('edL4').addEventListener('input', () => {
   edCostoNeto = c.costo_neto;
   edCostoIva = c.costo_iva;
   pintarCostosEdicion();
+});
+
+[1, 2, 3].forEach((n) => {
+  $(`edL${n}`).addEventListener('input', calcularMargenesEnVivo);
 });
 
 /**
@@ -969,18 +1042,20 @@ function listaDesdeCosto(n) {
   return Math.round(edCostoNeto * (1 + cfg.iva / 100) * factor);
 }
 
-// R por lista: recalcular ESA lista desde el costo (title "recalcular" +
-// leyenda visible debajo del botón).
+// Recalcular lista individual
 [1, 2, 3, 4].forEach((n) => {
   $(`edRL${n}`).addEventListener('click', () => {
     if (!(edCostoNeto > 0)) { setEdStatus('Cargá un costo neto > 0 (o una L4 válida) para recalcular', false); return; }
     $(`edL${n}`).value = listaDesdeCosto(n);
-    setEdStatus(`↺ L${n} recalculada desde el costo — guardá para aplicar`, true);
+    calcularMargenesEnVivo();
+    setEdStatus(`↺ L${n} recalculada desde el costo`, true);
   });
 });
 
 function abrirEdicion(p) {
+  const modal = $('editModal');
   $('edCodigo').value = p.codigo_unico;
+  $('edCodigoBadge').textContent = p.codigo_unico;
   $('edDesc').value = p.descripcion;
   (p.precios || []).slice(0, 4).forEach((n, i) => { $(`edL${i + 1}`).value = n; });
   for (let i = (p.precios || []).length; i < 4; i++) $(`edL${i + 1}`).value = '';
@@ -989,7 +1064,7 @@ function abrirEdicion(p) {
   $('edCodFab').value = p.codigo || '';
   $('edOferta').checked = !!p.oferta;
 
-  // Costos: mandan los GUARDADOS; si el artículo no trae, se derivan de la L4.
+  // Costos
   edCostoManual = false;
   const guardado = Number(p.costo_neto);
   const l4 = Number($('edL4').value);
@@ -1007,20 +1082,58 @@ function abrirEdicion(p) {
   pintarCostosEdicion();
 
   setEdStatus('', true);
-  $('editModal').hidden = false;
+  if (typeof modal.showModal === 'function') {
+    modal.showModal();
+  } else {
+    modal.hidden = false;
+  }
   $('edDesc').focus();
   $('edDesc').select();
 }
 
 function cerrarEdicion() {
-  $('editModal').hidden = true;
+  const modal = $('editModal');
+  if (typeof modal.close === 'function') {
+    modal.close();
+  } else {
+    modal.hidden = true;
+  }
 }
 
 $('edCerrar').addEventListener('click', cerrarEdicion);
 $('edCancelar').addEventListener('click', cerrarEdicion);
-$('editModal').addEventListener('click', (e) => { if (e.target === $('editModal')) cerrarEdicion(); });
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !$('editModal').hidden) cerrarEdicion();
+
+// Light dismiss al clickear el backdrop del <dialog>
+$('editModal').addEventListener('click', (e) => {
+  const rect = $('editModal').getBoundingClientRect();
+  const clickEnDialog = (
+    e.clientX >= rect.left && e.clientX <= rect.right &&
+    e.clientY >= rect.top && e.clientY <= rect.bottom
+  );
+  if (e.target === $('editModal') && !clickEnDialog) {
+    cerrarEdicion();
+  }
+});
+
+// Botón copiar código
+$('btnCopyCode').addEventListener('click', async () => {
+  const code = $('edCodigo').value;
+  if (!code) return;
+  try {
+    await navigator.clipboard.writeText(code);
+    const btn = $('btnCopyCode');
+    const old = btn.textContent;
+    btn.textContent = '✅ Copiado';
+    setTimeout(() => { btn.textContent = old; }, 1200);
+  } catch { /* ignore */ }
+});
+
+// Atajo Ctrl+Enter para guardar rápido
+$('editModal').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    $('edGuardar').click();
+  }
 });
 
 /** Recalcula L1..L3 desde el costo vigente (las 4 iguales si es oferta). */
@@ -1032,16 +1145,17 @@ $('edRecalc').addEventListener('click', () => {
   } else {
     for (let i = 1; i <= 3; i++) $(`edL${i}`).value = listaDesdeCosto(i);
   }
+  calcularMargenesEnVivo();
   setEdStatus('↺ Listas recalculadas desde el costo — guardá para aplicar', true);
 });
 
-// Tildar Oferta = la regla "la oferta manda los precios": las 4 listas quedan
-// iguales a la L4 (si no hay L4 cargada no se hace nada).
+// Tildar Oferta
 $('edOferta').addEventListener('change', () => {
   if (!$('edOferta').checked) return;
   const l4 = Number($('edL4').value);
   if (!Number.isFinite(l4) || l4 <= 0) return;
   for (let i = 1; i <= 4; i++) $(`edL${i}`).value = Math.round(l4);
+  calcularMargenesEnVivo();
   setEdStatus('🔥 En oferta: las 4 listas quedaron iguales a la L4 — guardá para aplicar', true);
 });
 
@@ -1061,8 +1175,6 @@ $('edGuardar').addEventListener('click', async () => {
     codigo: $('edCodFab').value.trim(),
     oferta: $('edOferta').checked,
   };
-  // El costo es dato EDITABLE: se manda tal cual (precisión completa). Solo se
-  // deriva de la L4 si quedó vacío/inválido (nunca dejar costos en 0).
   let neto = edCostoNeto;
   let iva = edCostoIva;
   if (!(neto > 0) || !(iva > 0)) {

@@ -325,72 +325,150 @@
     <footer class="foot">LOLA · panel de catálogo</footer>
   </main>
 
-  <!-- Modal de edición de artículo -->
-  <div class="modal" id="editModal" hidden>
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="edTitle">
+  <!-- Modal de edición de artículo moderno -->
+  <dialog class="modal-dialog" id="editModal">
+    <div class="modal-container">
       <div class="modal-head">
-        <h3 id="edTitle">✏️ Editar artículo</h3>
-        <button class="btn ghost" id="edCerrar" type="button" title="Cerrar">✕</button>
-      </div>
-
-      <label class="field"><span>Código único</span><input type="text" id="edCodigo" readonly></label>
-      <label class="field"><span>Descripción</span><input type="text" id="edDesc" autocomplete="off"></label>
-
-      <div class="grid2">
-        <label class="field"><span>Costo neto</span><input type="number" id="edCostoNeto" min="0" step="0.01"></label>
-        <label class="field"><span>Costo + IVA</span><input type="number" id="edCostoIva" min="0" step="0.01"></label>
-      </div>
-
-      <div class="grid4">
-        <div class="lista-field">
-          <label class="field">L1 <input type="number" id="edL1" min="0" step="1"></label>
-          <button class="btn ghost btn-recalc" id="edRL1" type="button" title="recalcular">R</button>
-          <span class="recalc-cap">recalcular</span>
+        <div class="modal-title-box">
+          <h3 id="edTitle">✏️ Editar artículo</h3>
+          <div class="code-badge-wrap">
+            <span class="code-badge" id="edCodigoBadge">CÓDIGO</span>
+            <input type="hidden" id="edCodigo">
+            <button type="button" class="btn ghost btn-copy" id="btnCopyCode" title="Copiar código único">📋 Copiar</button>
+          </div>
         </div>
-        <div class="lista-field">
-          <label class="field">L2 <input type="number" id="edL2" min="0" step="1"></label>
-          <button class="btn ghost btn-recalc" id="edRL2" type="button" title="recalcular">R</button>
-          <span class="recalc-cap">recalcular</span>
-        </div>
-        <div class="lista-field">
-          <label class="field">L3 <input type="number" id="edL3" min="0" step="1"></label>
-          <button class="btn ghost btn-recalc" id="edRL3" type="button" title="recalcular">R</button>
-          <span class="recalc-cap">recalcular</span>
-        </div>
-        <div class="lista-field">
-          <label class="field">L4 <input type="number" id="edL4" min="0" step="1"></label>
-          <button class="btn ghost btn-recalc" id="edRL4" type="button" title="recalcular">R</button>
-          <span class="recalc-cap">recalcular</span>
-        </div>
-      </div>
-      <div class="actions" style="margin-top:0">
-        <button id="edRecalc" class="btn ghost" type="button">↺ Recalcular L1..L3 desde el costo</button>
+        <button class="btn ghost btn-close" id="edCerrar" type="button" title="Cerrar modal (Esc)">✕</button>
       </div>
 
-      <div class="grid2">
-        <label class="field"><span>Categoría</span><input type="text" id="edCat" autocomplete="off"></label>
-        <label class="field"><span>Fábrica</span><input type="text" id="edFab" autocomplete="off"></label>
-      </div>
-
-      <div class="grid2">
-        <label class="field"><span>Código (fábrica)</span><input type="text" id="edCodFab" autocomplete="off"></label>
-        <label class="field"><span>Oferta</span>
-          <span class="chk"><input type="checkbox" id="edOferta"> En oferta — las 4 listas iguales</span>
+      <!-- Sección 1: Información Básica -->
+      <div class="modal-section">
+        <div class="modal-section-title">📦 Datos del Artículo</div>
+        <label class="field">
+          <span>Descripción</span>
+          <input type="text" id="edDesc" autocomplete="off" placeholder="Ej: KAURY 8146 C. SOFT...">
+        </label>
+        <div class="grid3">
+          <label class="field">
+            <span>Fábrica</span>
+            <input type="text" id="edFab" autocomplete="off" placeholder="SIN FABRICA">
+          </label>
+          <label class="field">
+            <span>Categoría</span>
+            <input type="text" id="edCat" autocomplete="off" placeholder="Opcional">
+          </label>
+          <label class="field">
+            <span>Código de fábrica</span>
+            <input type="text" id="edCodFab" autocomplete="off" placeholder="Ej: 8146">
+          </label>
+        </div>
+        <label class="switch-field">
+          <input type="checkbox" id="edOferta">
+          <span class="switch-slider"></span>
+          <span class="switch-label">🔥 <strong>Marcar como Oferta / Liquidación</strong> (las 4 listas se igualan a la Lista 4)</span>
         </label>
       </div>
 
-      <p class="hint">Los costos se editan a mano (cada campo manda sobre el otro con el
-        <strong>IVA de Configuración</strong>): un <strong>R</strong> recalcula una lista desde el costo y
-        <strong>↺ Recalcular L1..L3</strong> hace las tres de una vez (si es oferta, las 4 quedan iguales).
-        Subir el artículo cambia la revisión: <strong>las apps se resincronizan solas</strong>.</p>
-
-      <div class="actions">
-        <button id="edGuardar" class="btn primary" type="button">💾 Guardar</button>
-        <button id="edCancelar" class="btn ghost" type="button">Cancelar</button>
+      <!-- Sección 2: Costos y Base de Cálculo -->
+      <div class="modal-section">
+        <div class="modal-section-title">💲 Costos Base</div>
+        <div class="grid2">
+          <label class="field">
+            <span>Costo Neto (sin IVA)</span>
+            <div class="input-unit">
+              <span class="unit">$</span>
+              <input type="number" id="edCostoNeto" min="0" step="0.01" placeholder="0.00">
+            </div>
+          </label>
+          <label class="field">
+            <span>Costo + IVA (vigente)</span>
+            <div class="input-unit">
+              <span class="unit">$</span>
+              <input type="number" id="edCostoIva" min="0" step="0.01" placeholder="0.00">
+            </div>
+          </label>
+        </div>
+        <p class="section-hint">Vinculados automáticamente por el IVA configurado. Editar cualquiera recalcula el otro.</p>
       </div>
-      <span id="edStatus" class="status"></span>
+
+      <!-- Sección 3: Listas de Precios -->
+      <div class="modal-section">
+        <div class="section-head-row">
+          <div class="modal-section-title">🏷️ Listas de Precios al Público</div>
+          <button id="edRecalc" class="btn ghost btn-sm" type="button">↺ Recalcular todas desde costo</button>
+        </div>
+
+        <div class="grid4-cards">
+          <!-- L1 -->
+          <div class="price-card" id="cardL1">
+            <div class="price-card-head">
+              <span class="price-card-tag">Lista 1</span>
+              <button class="btn-card-recalc" id="edRL1" type="button" title="Recalcular L1">↺</button>
+            </div>
+            <div class="price-card-body">
+              <div class="input-unit compact">
+                <span class="unit">$</span>
+                <input type="number" id="edL1" min="0" step="1">
+              </div>
+              <span class="margin-badge" id="marginL1">— %</span>
+            </div>
+          </div>
+
+          <!-- L2 -->
+          <div class="price-card" id="cardL2">
+            <div class="price-card-head">
+              <span class="price-card-tag">Lista 2</span>
+              <button class="btn-card-recalc" id="edRL2" type="button" title="Recalcular L2">↺</button>
+            </div>
+            <div class="price-card-body">
+              <div class="input-unit compact">
+                <span class="unit">$</span>
+                <input type="number" id="edL2" min="0" step="1">
+              </div>
+              <span class="margin-badge" id="marginL2">— %</span>
+            </div>
+          </div>
+
+          <!-- L3 -->
+          <div class="price-card" id="cardL3">
+            <div class="price-card-head">
+              <span class="price-card-tag">Lista 3</span>
+              <button class="btn-card-recalc" id="edRL3" type="button" title="Recalcular L3">↺</button>
+            </div>
+            <div class="price-card-body">
+              <div class="input-unit compact">
+                <span class="unit">$</span>
+                <input type="number" id="edL3" min="0" step="1">
+              </div>
+              <span class="margin-badge" id="marginL3">— %</span>
+            </div>
+          </div>
+
+          <!-- L4 (Referencia) -->
+          <div class="price-card highlight" id="cardL4">
+            <div class="price-card-head">
+              <span class="price-card-tag">Lista 4 (Base)</span>
+              <button class="btn-card-recalc" id="edRL4" type="button" title="Recalcular L4">↺</button>
+            </div>
+            <div class="price-card-body">
+              <div class="input-unit compact">
+                <span class="unit">$</span>
+                <input type="number" id="edL4" min="0" step="1">
+              </div>
+              <span class="margin-badge" id="marginL4">— %</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-foot">
+        <span id="edStatus" class="status"></span>
+        <div class="modal-actions">
+          <button id="edCancelar" class="btn ghost" type="button">Cancelar</button>
+          <button id="edGuardar" class="btn primary" type="button">💾 Guardar cambios</button>
+        </div>
+      </div>
     </div>
-  </div>
+  </dialog>
 
   <script src="xlsx.full.min.js"></script>
   <script src="codigoUnico.js"></script>
