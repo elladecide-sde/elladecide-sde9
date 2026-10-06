@@ -266,6 +266,53 @@ code { background: var(--surface-2); padding: 1px 6px; border-radius: 5px; }
 .admin-pills .pill.sin { color: var(--muted); }
 .admin-warn { color: var(--red); }
 
+/* Subtabs y editor de parser */
+.subtabs {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  margin: 14px 0 16px; border-bottom: 1px solid var(--border);
+}
+.subtab {
+  background: transparent; border: none; border-bottom: 2px solid transparent;
+  color: var(--muted); padding: 8px 12px; font-size: 12.5px; font-weight: 600;
+  cursor: pointer; transition: color var(--t), border-color var(--t);
+}
+.subtab:hover { color: var(--text); }
+.subtab.active { color: var(--accent-2); border-bottom-color: var(--accent-2); }
+
+.subpanel { margin-top: 10px; }
+.subpanel-bar { display: flex; gap: 10px; margin-bottom: 14px; }
+.subpanel-bar input { flex: 1; }
+
+.table-wrap { max-height: 480px; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; }
+.config-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.config-table thead th {
+  position: sticky; top: 0; background: var(--surface-2);
+  padding: 10px 12px; text-align: left; font-size: 11px; text-transform: uppercase;
+  color: var(--muted); border-bottom: 1px solid var(--border); z-index: 2;
+}
+.config-table tbody td {
+  padding: 8px 12px; border-bottom: 1px solid rgba(57, 77, 89, 0.4); vertical-align: middle;
+}
+.config-table tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
+.config-table input[type="text"] {
+  padding: 6px 10px; font-size: 13px; border-radius: 6px;
+}
+
+.chip-container {
+  display: flex; flex-wrap: wrap; gap: 8px; max-height: 320px; overflow-y: auto;
+  padding: 12px; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 10px; margin-top: 10px;
+}
+.chip-item {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface-3); border: 1px solid var(--border);
+  color: var(--text); padding: 5px 10px; border-radius: 8px; font-size: 12.5px;
+}
+.chip-item .chip-del {
+  cursor: pointer; color: var(--muted); font-size: 14px; font-weight: bold; line-height: 1;
+}
+.chip-item .chip-del:hover { color: var(--red); }
+
 /* ── Modal ────────────────────────────────────────────────────────────────── */
 .modal {
   position: fixed; inset: 0;

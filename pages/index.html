@@ -211,6 +211,115 @@
         <div id="adminPreview" class="preview" hidden></div>
         <p class="hint" id="adminLegend" hidden></p>
       </section>
+
+      <!-- Subsección: Editor de Fábricas y Reglas del Parser -->
+      <section class="block" id="parserConfigBlock">
+        <div class="inv-head">
+          <div>
+            <h3 class="block-title">🏭 Reglas y Diccionario del Parser</h3>
+            <p class="muted" id="parserConfigMeta">Cargando estado…</p>
+          </div>
+          <div class="actions" style="margin:0">
+            <button id="btnGuardarParserCfg" class="btn primary" type="button">💾 Guardar cambios en la nube</button>
+            <button id="btnResetParserCfg" class="btn ghost" type="button">↺ Restaurar defaults</button>
+          </div>
+        </div>
+        <span id="parserConfigStatus" class="status"></span>
+
+        <!-- Subtabs de configuración -->
+        <nav class="subtabs" id="parserSubtabs">
+          <button class="subtab active" data-sub="fabricas" type="button">Fábricas (<span id="countFabricas">0</span>)</button>
+          <button class="subtab" data-sub="final" type="button">Fábricas al final (<span id="countFinal">0</span>)</button>
+          <button class="subtab" data-sub="sufijo" type="button">Fábricas con sufijo (<span id="countSufijo">0</span>)</button>
+          <button class="subtab" data-sub="rubro" type="button">Palabras de rubro (<span id="countRubro">0</span>)</button>
+          <button class="subtab" data-sub="genericas" type="button">Palabras genéricas (<span id="countGenericas">0</span>)</button>
+          <button class="subtab" data-sub="ofertas" type="button">Keywords de oferta (<span id="countOfertas">0</span>)</button>
+        </nav>
+
+        <!-- Panel 1: Fábricas -->
+        <div class="subpanel" id="subpanel-fabricas">
+          <div class="subpanel-bar">
+            <input type="search" id="filtroFabricas" placeholder="Filtrar fábricas por nombre o alias…">
+            <button id="btnNuevaFabrica" class="btn secondary" type="button">➕ Agregar fábrica</button>
+          </div>
+          <div class="table-wrap">
+            <table class="config-table" id="tablaFabricas">
+              <thead>
+                <tr>
+                  <th style="width: 35%">Nombre Canónico</th>
+                  <th style="width: 50%">Aliases (separados por coma)</th>
+                  <th style="width: 15%; text-align: center;">Acción</th>
+                </tr>
+              </thead>
+              <tbody id="tbodyFabricas"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Panel 2: Fábricas al final -->
+        <div class="subpanel" id="subpanel-final" hidden>
+          <p class="hint">Fábricas que cuando aparecen como última palabra del texto mandan sobre lo detectado al inicio (ej. <code>MAXIMA</code>).</p>
+          <div class="subpanel-bar">
+            <input type="text" id="inputNuevaFabricaFinal" placeholder="Nombre de fábrica (ej: MAXIMA)">
+            <button id="btnAgregarFabricaFinal" class="btn secondary" type="button">➕ Agregar</button>
+          </div>
+          <div class="chip-container" id="chipsFabricasFinal"></div>
+        </div>
+
+        <!-- Panel 3: Fábricas con sufijo -->
+        <div class="subpanel" id="subpanel-sufijo" hidden>
+          <p class="hint">Fábricas que se diferencian por una palabra clave al final de la descripción (ej: Base: <code>MARCELA KOURY</code> + Sufijo: <code>AGUA</code> → Nombre: <code>MARCELA KOURY AGUA</code>).</p>
+          <div class="cols" style="margin-bottom: 12px;">
+            <input type="text" id="sufijoBase" placeholder="Fábrica base (ej: MARCELA KOURY)">
+            <input type="text" id="sufijoPalabra" placeholder="Sufijo al final (ej: AGUA)">
+            <input type="text" id="sufijoNombre" placeholder="Nombre resultante (ej: MARCELA KOURY AGUA)">
+            <button id="btnAgregarSufijo" class="btn secondary" type="button">➕ Agregar</button>
+          </div>
+          <div class="table-wrap">
+            <table class="config-table" id="tablaSufijos">
+              <thead>
+                <tr>
+                  <th>Fábrica Base</th>
+                  <th>Sufijo al final</th>
+                  <th>Nombre resultante</th>
+                  <th style="text-align: center;">Acción</th>
+                </tr>
+              </thead>
+              <tbody id="tbodySufijos"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Panel 4: Palabras de rubro -->
+        <div class="subpanel" id="subpanel-rubro" hidden>
+          <p class="hint">Palabras de prenda o rubro que no deben tomarse como marcas aunque antecedan al código (ej: <code>BOXER</code>, <code>MEDIAS</code>, <code>CORPINO</code>).</p>
+          <div class="subpanel-bar">
+            <input type="text" id="inputNuevoRubro" placeholder="Nueva palabra de rubro (ej: CALZA)">
+            <button id="btnAgregarRubro" class="btn secondary" type="button">➕ Agregar</button>
+          </div>
+          <div class="chip-container" id="chipsRubro"></div>
+        </div>
+
+        <!-- Panel 5: Palabras genéricas -->
+        <div class="subpanel" id="subpanel-genericas" hidden>
+          <p class="hint">Palabras que describen atributos, talles o público y que NUNCA son marcas (ej: <code>DAMA</code>, <code>HOMBRE</code>, <code>BEBE</code>, <code>DEPORTIVO</code>).</p>
+          <div class="subpanel-bar">
+            <input type="text" id="inputNuevaGenerica" placeholder="Nueva palabra genérica (ej: VERANO)">
+            <button id="btnAgregarGenerica" class="btn secondary" type="button">➕ Agregar</button>
+          </div>
+          <div class="chip-container" id="chipsGenericas"></div>
+        </div>
+
+        <!-- Panel 6: Keywords de oferta -->
+        <div class="subpanel" id="subpanel-ofertas" hidden>
+          <p class="hint">Palabras en el título o descripción que marcan el artículo como oferta (ej: <code>OFERTA</code>, <code>LIQ</code>, <code>PROMO</code>).</p>
+          <div class="subpanel-bar">
+            <input type="text" id="inputNuevaOferta" placeholder="Nueva palabra clave de oferta (ej: LIQUIDACION)">
+            <button id="btnAgregarOferta" class="btn secondary" type="button">➕ Agregar</button>
+          </div>
+          <div class="chip-container" id="chipsOfertas"></div>
+        </div>
+      </section>
     </section>
 
     <footer class="foot">LOLA · panel de catálogo</footer>
@@ -291,9 +400,19 @@
        Los módulos se ejecutan DESPUÉS de app.js: por eso app.js solo lo pide
        adentro de los handlers (click), nunca al cargar. -->
   <script type="module">
-    import { FABRICAS, SIN_FABRICA, parseArticles, toPayload, buildPayload, summarizeFabricas }
-      from './articleParser.js';
-    window.LolaParser = { FABRICAS, SIN_FABRICA, parseArticles, toPayload, buildPayload, summarizeFabricas };
+    import {
+      FABRICAS, SIN_FABRICA, parseArticles, toPayload, buildPayload, summarizeFabricas,
+      updateParserConfig, getCurrentParserConfig,
+      DEFAULT_FABRICAS, DEFAULT_FABRICAS_AL_FINAL, DEFAULT_FABRICAS_CON_SUFIJO,
+      DEFAULT_PRODUCT_WORDS, DEFAULT_GENERIC_WORDS, DEFAULT_OFFER_KEYWORDS,
+    } from './articleParser.js';
+    window.LolaParser = {
+      FABRICAS, SIN_FABRICA, parseArticles, toPayload, buildPayload, summarizeFabricas,
+      updateParserConfig, getCurrentParserConfig,
+      DEFAULT_FABRICAS, DEFAULT_FABRICAS_AL_FINAL, DEFAULT_FABRICAS_CON_SUFIJO,
+      DEFAULT_PRODUCT_WORDS, DEFAULT_GENERIC_WORDS, DEFAULT_OFFER_KEYWORDS,
+    };
+    if (window.onLolaParserReady) window.onLolaParserReady();
   </script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * articleParser.js
  * Formato típico de la lista:  FABRICA [CODIGO] DESCRIPCION [LIQ.|OFERTA]
  *   "KAURY 8146 C. SOFT TRIANG TUL PUNT OFERTA"
@@ -20,10 +20,8 @@ const normApos = (s) => s.replace(/[´`’‘]/g, "'");
 const fabKey = (s) => strip(s).replace(/[^A-Z0-9]/g, ''); // BENTURA´S == BENTURA`S == BENTURA'S
 const cleanTok = (t) => strip(t).replace(/[^A-Z0-9]/g, '');
 
-/* ───────────── configuración (editá acá) ───────────── */
-// Fábricas confirmadas. `alias` = otras formas de escribir la misma fábrica (se unifican bajo `nombre`).
-// Siempre se reconocen, aunque aparezcan pocas veces en la lista.
-export const FABRICAS = [
+/* ───────────── configuración por defecto ───────────── */
+export const DEFAULT_FABRICAS = [
   { nombre: 'ACROBATA' },
   { nombre: 'ANA KENDY', alias: ['ANAKENDY', 'ANA'] },
   { nombre: 'ALMENDRA' },
@@ -92,31 +90,104 @@ export const FABRICAS = [
   { nombre: 'VIENTO Y OLAS', alias: ['VYO'] },
 ];
 
-// Fábricas que, cuando aparecen como ÚLTIMA palabra del texto, mandan sobre lo detectado al inicio.
-// Ej.: "PEZONERAS SILICONA SR-681 - MAXIMA", "INTELLIGENTBRA 73 CONEJITO PEZONERA SR-679 MAXIMA".
-// Lo detectado al inicio (marca) se conserva en el campo `marca`.
-export const FABRICAS_AL_FINAL = ['MAXIMA'];
+export const DEFAULT_FABRICAS_AL_FINAL = ['MAXIMA'];
+export const DEFAULT_FABRICAS_CON_SUFIJO = [{ base: 'MARCELA KOURY', sufijo: 'AGUA', nombre: 'MARCELA KOURY AGUA' }];
 
-// Fábricas que se distinguen por una palabra al FINAL del texto (esa palabra se saca de la descripción).
-// Ej.: "MARCELA KOURY 3535 BIKINI ARO VEDETINA AGUA" -> MARCELA KOURY AGUA
-export const FABRICAS_CON_SUFIJO = [{ base: 'MARCELA KOURY', sufijo: 'AGUA', nombre: 'MARCELA KOURY AGUA' }];
+export const DEFAULT_PRODUCT_WORDS = (
+  'BOXER PACK PACKS MEDIAS MEDIA BOMBACHA BOMBACHAS CORPINO CORPINOS BRALETTE BRALETT CAMISON CAMISONES ' +
+  'PIJAMA PIJAMAS SHORT SLIP CALZA CALZAS BODY TOP REMERA COLALESS VEDETINA VEDETINAS TANGA SOQUETE ' +
+  'SOQUETES FAJA BRETEL PANTY MALLA MALLAS BIKINI CONJUNTO CULOTTE LESS PANTUFLA PEZONERA PEZONERAS'
+).split(' ');
 
-export const FABRICAS_FORZADAS = FABRICAS.map((f) => f.nombre);
-export const ALIAS_FABRICAS = Object.fromEntries(
+export const DEFAULT_GENERIC_WORDS = (
+  'BABY DOLL NENA NENE DAMA DAMAS HOMBRE SENORA NINO NINOS BEBE MANGA MATERNAL SOLO SOLA SUELTA SUELTAS ' +
+  'DEPORTIVO ARTICULOS ARTICULO DE X SIN CAMBIO LARGA CORTA VERANO INVIERNO ADULTO ADULTOS SILICONA TELA'
+).split(' ');
+
+export const DEFAULT_OFFER_KEYWORDS = [
+  'OFERTA', 'LIQ', 'PROMO', 'REMATE', 'SALDO', 'OUTLET', 'DESCUENTO', 'DTO'
+];
+
+/* ───────────── configuración activa (dinámica) ───────────── */
+export let FABRICAS = [...DEFAULT_FABRICAS];
+export let FABRICAS_AL_FINAL = [...DEFAULT_FABRICAS_AL_FINAL];
+export let FABRICAS_CON_SUFIJO = [...DEFAULT_FABRICAS_CON_SUFIJO];
+export let PRODUCT_WORDS = new Set(DEFAULT_PRODUCT_WORDS);
+export let GENERIC_WORDS = new Set(DEFAULT_GENERIC_WORDS);
+
+export let FABRICAS_FORZADAS = FABRICAS.map((f) => f.nombre);
+export let ALIAS_FABRICAS = Object.fromEntries(
   FABRICAS.flatMap((f) => (f.alias ?? []).map((a) => [fabKey(a), f.nombre]))
 );
-// Claves de nombres/alias conocidos: "G3" o "4BIDDEN" no deben confundirse con un código.
-const NAME_KEYS = new Set([...FABRICAS.map((f) => fabKey(f.nombre)), ...Object.keys(ALIAS_FABRICAS)]);
+let NAME_KEYS = new Set([...FABRICAS.map((f) => fabKey(f.nombre)), ...Object.keys(ALIAS_FABRICAS)]);
 
 /* ───────────── 1) Ofertas ───────────── */
-// Cada regla se aplica a UNA palabra completa (no a pedazos de otra palabra).
-const OFFER_RULES = [
+const BUILTIN_OFFER_RULES = [
   { tipo: 'oferta', re: /^OFE(R(T(A|AS)?)?)?$/ },            // ofe, ofer, ofert, oferta(s)
   { tipo: 'liquidacion', re: /^LIQ(UID\w*)?$/ },              // liq, liq., liquidacion(es), liquidado
   { tipo: 'promo', re: /^PROMO(S|CION|CIONES)?$/ },           // promo, promocion
   { tipo: 'remate', re: /^(REMATE|SALDOS?|OUTLET)$/ },
   { tipo: 'descuento', re: /^(DESCUENTOS?|DTO)$/ },
 ];
+export let OFFER_RULES = [...BUILTIN_OFFER_RULES];
+
+export function updateParserConfig(cfg) {
+  if (!cfg || typeof cfg !== 'object') return;
+  if (Array.isArray(cfg.fabricas)) {
+    FABRICAS = cfg.fabricas.map((f) => ({
+      nombre: String(f.nombre || '').trim(),
+      alias: Array.isArray(f.alias) ? f.alias.map((a) => String(a || '').trim()).filter(Boolean) : [],
+    })).filter((f) => f.nombre);
+    FABRICAS_FORZADAS = FABRICAS.map((f) => f.nombre);
+    ALIAS_FABRICAS = Object.fromEntries(
+      FABRICAS.flatMap((f) => (f.alias ?? []).map((a) => [fabKey(a), f.nombre]))
+    );
+    NAME_KEYS = new Set([...FABRICAS.map((f) => fabKey(f.nombre)), ...Object.keys(ALIAS_FABRICAS)]);
+  }
+
+  if (Array.isArray(cfg.fabricasAlFinal)) {
+    FABRICAS_AL_FINAL = cfg.fabricasAlFinal.map((x) => String(x || '').trim()).filter(Boolean);
+  }
+
+  if (Array.isArray(cfg.fabricasConSufijo)) {
+    FABRICAS_CON_SUFIJO = cfg.fabricasConSufijo.map((x) => ({
+      base: String(x.base || '').trim(),
+      sufijo: String(x.sufijo || '').trim(),
+      nombre: String(x.nombre || '').trim(),
+    })).filter((x) => x.base && x.sufijo && x.nombre);
+  }
+
+  if (Array.isArray(cfg.productWords)) {
+    PRODUCT_WORDS = new Set(cfg.productWords.map((w) => cleanTok(String(w))).filter(Boolean));
+  }
+
+  if (Array.isArray(cfg.genericWords)) {
+    GENERIC_WORDS = new Set(cfg.genericWords.map((w) => cleanTok(String(w))).filter(Boolean));
+  }
+
+  if (Array.isArray(cfg.offerKeywords)) {
+    const custom = cfg.offerKeywords
+      .map((k) => cleanTok(String(k)))
+      .filter(Boolean)
+      .map((k) => ({
+        tipo: 'oferta',
+        re: new RegExp(`^${k}$`, 'i'),
+      }));
+    OFFER_RULES = [...BUILTIN_OFFER_RULES, ...custom];
+  }
+}
+
+export function getCurrentParserConfig() {
+  return {
+    fabricas: FABRICAS.map((f) => ({ nombre: f.nombre, alias: [...(f.alias || [])] })),
+    fabricasAlFinal: [...FABRICAS_AL_FINAL],
+    fabricasConSufijo: FABRICAS_CON_SUFIJO.map((s) => ({ ...s })),
+    productWords: [...PRODUCT_WORDS],
+    genericWords: [...GENERIC_WORDS],
+    offerKeywords: [...DEFAULT_OFFER_KEYWORDS],
+  };
+}
+
 const detectOffer = (tok) => {
   const c = cleanTok(tok);
   return c ? OFFER_RULES.find((r) => r.re.test(c))?.tipo ?? null : null;
@@ -146,17 +217,6 @@ const findCodeIndex = (toks) => {
   return i >= 0 && i < MAX_CODE_POS ? i : -1;
 };
 
-// Palabras de rubro que a veces se cuelan antes de la fábrica ("BOXER BAKHOU 2103", "PACK CALVIN KLEIN 2200")
-const PRODUCT_WORDS = new Set(
-  ('BOXER PACK PACKS MEDIAS MEDIA BOMBACHA BOMBACHAS CORPINO CORPINOS BRALETTE BRALETT CAMISON CAMISONES ' +
-    'PIJAMA PIJAMAS SHORT SLIP CALZA CALZAS BODY TOP REMERA COLALESS VEDETINA VEDETINAS TANGA SOQUETE ' +
-    'SOQUETES FAJA BRETEL PANTY MALLA MALLAS BIKINI CONJUNTO CULOTTE LESS PANTUFLA PEZONERA PEZONERAS').split(' ')
-);
-// Palabras que describen público/atributo y NUNCA son una fábrica (medidas sobre la lista real)
-const GENERIC_WORDS = new Set(
-  ('BABY DOLL NENA NENE DAMA DAMAS HOMBRE SENORA NINO NINOS BEBE MANGA MATERNAL SOLO SOLA SUELTA SUELTAS ' +
-    'DEPORTIVO ARTICULOS ARTICULO DE X SIN CAMBIO LARGA CORTA VERANO INVIERNO ADULTO ADULTOS SILICONA TELA').split(' ')
-);
 const isProduct = (t) => PRODUCT_WORDS.has(cleanTok(t)) || GENERIC_WORDS.has(cleanTok(t));
 
 /* ───────────── tokenización ───────────── */

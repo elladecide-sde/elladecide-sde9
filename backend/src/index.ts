@@ -8,6 +8,18 @@
 //                                nombre, precios } siguen idénticos (Android los
 //                                exige) + fabrica, codigo, descripcion,
 //                                costo_neto, oferta. Nunca se quitan campos.
+//                                Query params ADITIVOS (sin args = byte idéntico):
+//                                  · ?fields=a,b   → por fila SOLO esos campos
+//                                  · ?page=N&limit=M → páginas (limit default
+//                                    100); el envelope agrega page, limit,
+//                                    total, totalPages y hasMore
+//                                  · ?since=UTC    → solo updated_at >= ese
+//                                    instante ('0' o vacío = todo); el
+//                                    envelope agrega serverTime, que es lo que
+//                                    el cliente manda como ?since la próxima
+//                                Combinables entre sí y con ?mode. Un valor
+//                                inválido → 400 con el detalle (nunca degradar
+//                                en silencio).
 //   GET  /api/v1/sync/v2       → contrato NUEVO. La forma depende de
 //                                config.sync_mode:
 //                                  · predeterminado     → TODOS los campos de la
@@ -17,6 +29,7 @@
 //                                  · descripcion-costos → { descripcion, costo }
 //                                (costo = costo_neto; sin listas, sin costo+IVA,
 //                                 sin categoría, sin fábrica, sin código, sin oferta)
+//                                (acepta los mismos ?fields, ?page, ?limit, ?since)
 //   GET  /api/v1/sync-config   → { modo }
 //   GET  /api/v1/mapa-catalogo → { revision, hash, productos } (editor de fotos)
 //
@@ -43,6 +56,7 @@ import { computeCatalogHash, type ProductRef } from './hash';
 import { partir } from './codigoUnico';
 import { importCatalogo } from './importCatalogo';
 import { derivarCostos, fabPersistida, listasDe, PRECIOS_DEFAULT, type Producto } from './modelo';
+import { FIELDS_V1, FIELDS_V2, FIELDS_V2_DC, pageMeta, parseSyncQuery, pickFields, type SyncQuery } from './syncQuery';
 
 export interface Env {
   DB: D1Database;
@@ -212,10 +226,63 @@ async function setSyncMode(db: D1Database, modo: SyncMode): Promise<void> {
     .run();
 }
 
+// ── Config del parser (fábricas, palabras de rubro, reglas de oferta) ───────
+
+export interface ParserConfigRow {
+  version: number;
+  config: Record<string, unknown>;
+  updated_at: string;
+}
+
+async function getParserConfig(db: D1Database): Promise<ParserConfigRow> {
+  try {
+    const row = await db
+      .prepare("SELECT version, config_json, updated_at FROM parser_config WHERE key = 'default'")
+      .first<{ version: number; config_json: string; updated_at: string }>();
+    if (row) {
+      let parsed = {};
+      try { parsed = JSON.parse(row.config_json || '{}'); } catch { /* vacio */ }
+      return { version: row.version, config: parsed, updated_at: row.updated_at };
+    }
+  } catch {
+    /* Si la tabla aún no existe, devuelve default */
+  }
+  return { version: 0, config: {}, updated_at: '' };
+}
+
+async function setParserConfig(db: D1Database, configObj: Record<string, unknown>): Promise<{ version: number }> {
+  // Asegura creación de tabla si faltara
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS parser_config (
+      key TEXT PRIMARY KEY,
+      version INTEGER NOT NULL DEFAULT 0,
+      config_json TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `).run();
+
+  const current = await db
+    .prepare("SELECT version FROM parser_config WHERE key = 'default'")
+    .first<{ version: number }>();
+  const nextVer = (current?.version ?? 0) + 1;
+  const jsonStr = JSON.stringify(configObj);
+
+  await db.prepare(`
+    INSERT INTO parser_config (key, version, config_json, updated_at)
+    VALUES ('default', ?, ?, datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET
+      version = excluded.version,
+      config_json = excluded.config_json,
+      updated_at = excluded.updated_at
+  `).bind(nextVer, jsonStr).run();
+
+  return { version: nextVer };
+}
+
 // ── Autenticación ────────────────────────────────────────────────────────────
 
 async function handleLogin(request: Request, env: Env): Promise<Response> {
-  const { ADMIN_USER, ADMIN_PASSWORD, JWT_SECRET } = env;
+  const { ADMIN_USER, JWT_SECRET } = env;
   if (!ADMIN_USER || !JWT_SECRET) {
     return err('Autenticación no configurada en el Worker', 503);
   }
@@ -411,10 +478,55 @@ async function rollbackCatalog(db: D1Database, backup: 'bak' | 'bak2') {
  *   · descripcion = nombre (misma cadena con la clave nueva)
  *   · oferta      → los 4 precios iguales se confirman con el campo, no a mano
  */
-async function handleSync(db: D1Database) {
+/**
+ * Lee products aplicando los params aditivos (?since y ?page/?limit).
+ * El orden es por codigo_unico: estable, así las páginas no se pisan.
+ * serverTime se toma ANTES de leer (reloj de la D1, el mismo que escribe
+ * updated_at): puede repetir filas, nunca perderlas.
+ */
+async function leerProducts(db: D1Database, cols: string, q: SyncQuery) {
+  const where = q.since !== undefined ? ' WHERE updated_at >= ?' : '';
+  const binds: (string | number)[] = q.since !== undefined ? [q.since] : [];
+
+  let serverTime: string | undefined;
+  if (q.since !== undefined) {
+    serverTime = (await db.prepare("SELECT datetime('now') AS t").first<{ t: string }>())?.t ?? '';
+  }
+
+  const paginado = q.page !== undefined && q.limit !== undefined;
+  let total: number | undefined;
+  if (paginado) {
+    const count = db.prepare(`SELECT COUNT(*) AS n FROM products${where}`);
+    const row = binds.length ? await count.bind(...binds).first<{ n: number }>() : await count.first<{ n: number }>();
+    total = row?.n ?? 0;
+  }
+
+  let sql = `SELECT ${cols} FROM products${where} ORDER BY codigo_unico`;
+  if (paginado) {
+    sql += ' LIMIT ? OFFSET ?';
+    binds.push(q.limit as number, ((q.page as number) - 1) * (q.limit as number));
+  }
+  const stmt = binds.length ? db.prepare(sql).bind(...binds) : db.prepare(sql);
+  const res = await stmt.all<RowProducto>();
+  return { rows: res.results ?? [], total, serverTime };
+}
+
+/** Enriquece el envelope SOLO cuando hubo params: sin args el shape no cambia. */
+function conExtras(body: Record<string, unknown>, q: SyncQuery, total?: number, serverTime?: string) {
+  if (serverTime !== undefined) body.serverTime = serverTime;
+  if (q.page !== undefined && q.limit !== undefined) {
+    Object.assign(body, pageMeta(q.page, q.limit, total ?? 0));
+  }
+  return body;
+}
+
+async function handleSync(db: D1Database, params: URLSearchParams) {
   const meta = await getMetadata(db);
-  const res = await db.prepare(`SELECT ${PRODUCT_COLS} FROM products ORDER BY codigo_unico`).all<RowProducto>();
-  const products = (res.results ?? []).map((r) => ({
+  const q = parseSyncQuery(params, FIELDS_V1);
+  if (!q.ok) return err(q.error, 400);
+  const { rows, total, serverTime } = await leerProducts(db, PRODUCT_COLS, q.query);
+
+  const products = rows.map((r) => pickFields({
     codigo_unico: r.codigo_unico,
     nombre: r.descripcion,
     precios: listasDe(r).map((n) => Math.round(n)),
@@ -423,8 +535,9 @@ async function handleSync(db: D1Database) {
     descripcion: r.descripcion,
     costo_neto: r.costo_neto,
     oferta: r.oferta === 1,
-  }));
-  return json({ revision: meta.revision, hash: meta.hash, products });
+  }, q.query.fields));
+
+  return json(conExtras({ revision: meta.revision, hash: meta.hash, products }, q.query, total, serverTime));
 }
 
 /**
@@ -432,26 +545,23 @@ async function handleSync(db: D1Database) {
  * El envelope (revision + hash) es igual al v1: el hash sigue siendo el
  * canónico del catálogo completo, así cualquier cliente puede comparar.
  */
-async function handleSyncV2(db: D1Database) {
+async function handleSyncV2(db: D1Database, params: URLSearchParams) {
   const meta = await getMetadata(db);
   const modo = await getSyncMode(db);
+  const q = parseSyncQuery(params, modo === 'descripcion-costos' ? FIELDS_V2_DC : FIELDS_V2);
+  if (!q.ok) return err(q.error, 400);
   // updated_at NO está en PRODUCT_COLS (esas columnas alimentan INSERT/backup):
   // se suma SOLO acá, que es donde v2 expone la fila completa.
-  const res = await db
-    .prepare(`SELECT ${PRODUCT_COLS}, updated_at FROM products ORDER BY codigo_unico`)
-    .all<RowProducto>();
+  const { rows, total, serverTime } = await leerProducts(db, `${PRODUCT_COLS}, updated_at`, q.query);
 
   if (modo === 'descripcion-costos') {
     // Únicamente { descripcion, costo }. Sin listas, sin costo+IVA,
     // sin categoría, sin fábrica.
-    const products = (res.results ?? []).map((r) => ({
-      descripcion: r.descripcion,
-      costo: r.costo_neto,
-    }));
-    return json({ revision: meta.revision, hash: meta.hash, format: modo, products });
+    const products = rows.map((r) => pickFields({ descripcion: r.descripcion, costo: r.costo_neto }, q.query.fields));
+    return json(conExtras({ revision: meta.revision, hash: meta.hash, format: modo, products }, q.query, total, serverTime));
   }
 
-  const products = (res.results ?? []).map((r) => ({
+  const products = rows.map((r) => pickFields({
     codigo_unico: r.codigo_unico,
     descripcion: r.descripcion,
     precios: listasDe(r).map((n) => Math.round(n)),
@@ -462,8 +572,8 @@ async function handleSyncV2(db: D1Database) {
     costo_neto: r.costo_neto,
     costo_iva: r.costo_iva,
     updated_at: r.updated_at,
-  }));
-  return json({ revision: meta.revision, hash: meta.hash, format: modo, products });
+  }, q.query.fields));
+  return json(conExtras({ revision: meta.revision, hash: meta.hash, format: modo, products }, q.query, total, serverTime));
 }
 
 /** GET /api/v1/sync-config → { modo }. Lectura libre: es solo un formato. */
@@ -485,6 +595,28 @@ async function handleSyncConfigWrite(request: Request, db: D1Database): Promise<
   }
   await setSyncMode(db, modo as SyncMode);
   return json({ modo });
+}
+
+/** GET /api/v1/parser-config → { version, config, updated_at }. Público, lectura rápida con versión. */
+async function handleParserConfig(db: D1Database) {
+  const row = await getParserConfig(db);
+  return json(row);
+}
+
+/** POST /api/v1/admin/parser-config { config } → { version, ok: true } (admin). */
+async function handleParserConfigWrite(request: Request, db: D1Database): Promise<Response> {
+  let body: { config?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return err('Body inválido', 400);
+  }
+  const config = body?.config;
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    return err('`config` debe ser un objeto', 400);
+  }
+  const res = await setParserConfig(db, config as Record<string, unknown>);
+  return json({ ok: true, version: res.version });
 }
 
 /** GET /api/v1/mapa-catalogo — para el editor de fotos (sde11). */
@@ -558,8 +690,8 @@ async function handleImport(request: Request, env: Env): Promise<Response> {
 function normalizeProducts(body: unknown): Product[] {
   const list: unknown[] = Array.isArray(body)
     ? body
-    : body && typeof body === 'object' && Array.isArray((body as any).products)
-      ? (body as any).products
+    : body && typeof body === 'object' && Array.isArray((body as { products?: unknown }).products)
+      ? (body as { products: unknown[] }).products
       : [body];
 
   const vacio = list.length === 0 || (list.length === 1 && (!list[0] || typeof list[0] !== 'object'));
@@ -623,11 +755,13 @@ export default {
         res = json(await getMetadata(env.DB));
       } else if (method === 'GET' && path === '/api/v1/sync') {
         // Aditivo: los campos viejos intactos + los nuevos. No quitar nada.
-        res = await handleSync(env.DB);
+        res = await handleSync(env.DB, url.searchParams);
       } else if (method === 'GET' && path === '/api/v1/sync/v2') {
-        res = await handleSyncV2(env.DB);
+        res = await handleSyncV2(env.DB, url.searchParams);
       } else if (method === 'GET' && path === '/api/v1/sync-config') {
         res = await handleSyncConfig(env.DB);
+      } else if (method === 'GET' && path === '/api/v1/parser-config') {
+        res = await handleParserConfig(env.DB);
       } else if (method === 'GET' && path === '/api/v1/mapa-catalogo') {
         res = await handleMapa(env.DB);
       } else if (method === 'POST' && path === '/api/v1/auth/login') {
@@ -657,6 +791,10 @@ export default {
         const auth = await requireAdmin(request, env);
         if (!auth.ok) res = err(auth.reason ?? 'No autorizado', 401);
         else res = await handleSyncConfigWrite(request, env.DB);
+      } else if (method === 'POST' && path === '/api/v1/admin/parser-config') {
+        const auth = await requireAdmin(request, env);
+        if (!auth.ok) res = err(auth.reason ?? 'No autorizado', 401);
+        else res = await handleParserConfigWrite(request, env.DB);
       } else if (method === 'POST' && path === '/api/v1/admin/rollback') {
         const auth = await requireAdmin(request, env);
         if (!auth.ok) res = err(auth.reason ?? 'No autorizado', 401);

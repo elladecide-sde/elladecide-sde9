@@ -154,6 +154,19 @@ CREATE TABLE IF NOT EXISTS producto_categoria (
 );
 CREATE INDEX IF NOT EXISTS idx_pc_categoria ON producto_categoria(categoria_id);
 
+-- ── parser_config: config editable del articleParser ────────────────────────
+--   version     : contador monotónico que el cliente usa como clave de caché.
+--   config_json : JSON con fabricas, product_words, generic_words, offer_rules, etc.
+CREATE TABLE IF NOT EXISTS parser_config (
+  key         TEXT PRIMARY KEY,          -- siempre 'default'
+  version     INTEGER NOT NULL DEFAULT 0,
+  config_json TEXT NOT NULL DEFAULT '{}',
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+INSERT INTO parser_config (key)
+VALUES ('default')
+ON CONFLICT(key) DO NOTHING;
+
 -- ── Seed del singleton de metadata ──────────────────────────────────────────
 INSERT INTO metadata (key)
 VALUES ('catalog')

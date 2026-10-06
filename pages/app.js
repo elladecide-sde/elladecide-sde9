@@ -304,6 +304,7 @@ function setVista(v) {
 
   if (v === 'inventario' && inventario === null) cargarInventario();
   if (v === 'config') cargarModoSync();
+  if (v === 'admin') cargarParserConfig();
 }
 
 document.querySelectorAll('.tab').forEach((b) => {
@@ -1328,6 +1329,396 @@ $('adminAplicar').addEventListener('click', async () => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// Sección Administración — Editor de Reglas del Parser (D1 + Caché Local)
+// ════════════════════════════════════════════════════════════════════════════
+
+const PARSER_CFG_STORAGE_KEY = 'lola_parser_config_cache';
+const PARSER_CFG_VERSION_KEY = 'lola_parser_config_ver';
+
+let parserCfgData = null; // { fabricas, fabricasAlFinal, fabricasConSufijo, productWords, genericWords, offerKeywords }
+let parserCfgVersion = -1;
+let subtabActual = 'fabricas';
+
+function setParserCfgStatus(msg, ok) {
+  const el = $('parserConfigStatus');
+  el.textContent = msg;
+  el.className = 'status ' + (ok ? 'ok' : 'err');
+}
+
+function inicializarParserDefaults() {
+  const P = window.LolaParser;
+  if (!P) return;
+  return {
+    fabricas: (P.DEFAULT_FABRICAS || []).map((f) => ({ nombre: f.nombre, alias: [...(f.alias || [])] })),
+    fabricasAlFinal: [...(P.DEFAULT_FABRICAS_AL_FINAL || [])],
+    fabricasConSufijo: (P.DEFAULT_FABRICAS_CON_SUFIJO || []).map((s) => ({ ...s })),
+    productWords: [...(P.DEFAULT_PRODUCT_WORDS || [])],
+    genericWords: [...(P.DEFAULT_GENERIC_WORDS || [])],
+    offerKeywords: [...(P.DEFAULT_OFFER_KEYWORDS || [])],
+  };
+}
+
+async function cargarParserConfig() {
+  const P = window.LolaParser;
+  if (!P) return;
+
+  // 1. Cargar caché de localStorage si existe
+  try {
+    const rawCache = localStorage.getItem(PARSER_CFG_STORAGE_KEY);
+    const verCache = Number(localStorage.getItem(PARSER_CFG_VERSION_KEY)) || 0;
+    if (rawCache && !parserCfgData) {
+      parserCfgData = JSON.parse(rawCache);
+      parserCfgVersion = verCache;
+      P.updateParserConfig(parserCfgData);
+      renderParserConfigUI();
+    }
+  } catch (e) { /* ignore */ }
+
+  if (!parserCfgData) {
+    parserCfgData = inicializarParserDefaults();
+    P.updateParserConfig(parserCfgData);
+    renderParserConfigUI();
+  }
+
+  // 2. Consultar versión en backend (D1)
+  try {
+    $('parserConfigMeta').textContent = 'Comprobando sincronización con la nube…';
+    const res = await fetch(`${API_BASE}/api/v1/parser-config`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const j = await res.json();
+    const remoteVer = Number(j.version) || 0;
+
+    // Si en D1 ya hay versión superior y trae config no vacía
+    if (remoteVer > parserCfgVersion && j.config && Object.keys(j.config).length > 0) {
+      parserCfgData = j.config;
+      parserCfgVersion = remoteVer;
+      localStorage.setItem(PARSER_CFG_STORAGE_KEY, JSON.stringify(parserCfgData));
+      localStorage.setItem(PARSER_CFG_VERSION_KEY, String(parserCfgVersion));
+      P.updateParserConfig(parserCfgData);
+      renderParserConfigUI();
+      $('parserConfigMeta').textContent = `✅ Sincronizado con D1 (versión ${remoteVer} · ${j.updated_at || 'activa'})`;
+    } else {
+      $('parserConfigMeta').textContent = remoteVer > 0
+        ? `✅ En sincronía con la nube (versión ${remoteVer} en caché)`
+        : '⚡ Usando valores por defecto (aún no guardados en D1)';
+    }
+  } catch (err) {
+    $('parserConfigMeta').textContent = '⚠️ Trabajando en modo local (sin conexión con D1)';
+  }
+}
+
+// Callback por si el módulo se evaluó después
+window.onLolaParserReady = () => {
+  cargarParserConfig();
+};
+
+function renderParserConfigUI() {
+  if (!parserCfgData) return;
+
+  // Actualizar contadores
+  $('countFabricas').textContent = (parserCfgData.fabricas || []).length;
+  $('countFinal').textContent = (parserCfgData.fabricasAlFinal || []).length;
+  $('countSufijo').textContent = (parserCfgData.fabricasConSufijo || []).length;
+  $('countRubro').textContent = (parserCfgData.productWords || []).length;
+  $('countGenericas').textContent = (parserCfgData.genericWords || []).length;
+  $('countOfertas').textContent = (parserCfgData.offerKeywords || []).length;
+
+  renderTablaFabricas();
+  renderChipsFinal();
+  renderTablaSufijos();
+  renderChipsRubro();
+  renderChipsGenericas();
+  renderChipsOfertas();
+}
+
+// Subtabs switching
+document.querySelectorAll('#parserSubtabs .subtab').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    subtabActual = btn.dataset.sub;
+    document.querySelectorAll('#parserSubtabs .subtab').forEach((b) => b.classList.toggle('active', b === btn));
+    ['fabricas', 'final', 'sufijo', 'rubro', 'genericas', 'ofertas'].forEach((k) => {
+      $('subpanel-' + k).hidden = k !== subtabActual;
+    });
+  });
+});
+
+// 1. Fábricas
+function renderTablaFabricas() {
+  const tbody = $('tbodyFabricas');
+  tbody.innerHTML = '';
+  const filtro = String($('filtroFabricas').value || '').trim().toLowerCase();
+
+  const list = parserCfgData.fabricas || [];
+  list.forEach((f, idx) => {
+    const nombre = f.nombre || '';
+    const aliases = (f.alias || []).join(', ');
+    if (filtro && !nombre.toLowerCase().includes(filtro) && !aliases.toLowerCase().includes(filtro)) {
+      return;
+    }
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="text" value="${nombre.replace(/"/g, '&quot;')}" data-idx="${idx}" data-field="nombre" style="font-weight:600"></td>
+      <td><input type="text" value="${aliases.replace(/"/g, '&quot;')}" data-idx="${idx}" data-field="alias" placeholder="ALIAS1, ALIAS2…"></td>
+      <td style="text-align: center;"><button type="button" class="btn ghost btn-del-fab" data-idx="${idx}" title="Eliminar">🗑️</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+$('filtroFabricas').addEventListener('input', renderTablaFabricas);
+
+$('tbodyFabricas').addEventListener('input', (e) => {
+  const target = e.target;
+  const idx = Number(target.dataset.idx);
+  const field = target.dataset.field;
+  if (!parserCfgData.fabricas[idx]) return;
+
+  if (field === 'nombre') {
+    parserCfgData.fabricas[idx].nombre = target.value.trim().toUpperCase();
+  } else if (field === 'alias') {
+    parserCfgData.fabricas[idx].alias = target.value.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+  }
+  aplicarConfiguracionEnMemoria();
+});
+
+$('tbodyFabricas').addEventListener('click', (e) => {
+  const btn = e.target.closest('.btn-del-fab');
+  if (!btn) return;
+  const idx = Number(btn.dataset.idx);
+  const f = parserCfgData.fabricas[idx];
+  if (!confirm(`¿Eliminar la fábrica "${f.nombre}"?`)) return;
+  parserCfgData.fabricas.splice(idx, 1);
+  aplicarConfiguracionEnMemoria();
+  renderParserConfigUI();
+});
+
+$('btnNuevaFabrica').addEventListener('click', () => {
+  const n = prompt('Nombre canónico de la nueva fábrica (ej: NUEVA MARCA):');
+  if (!n || !n.trim()) return;
+  const nombre = n.trim().toUpperCase();
+  if (parserCfgData.fabricas.some((f) => f.nombre === nombre)) {
+    alert(`La fábrica "${nombre}" ya existe.`);
+    return;
+  }
+  parserCfgData.fabricas.unshift({ nombre, alias: [] });
+  aplicarConfiguracionEnMemoria();
+  $('filtroFabricas').value = '';
+  renderParserConfigUI();
+  setParserCfgStatus(`Fábrica "${nombre}" agregada. Guardá para sincronizar.`, true);
+});
+
+// 2. Fábricas al final
+function renderChipsFinal() {
+  const cont = $('chipsFabricasFinal');
+  cont.innerHTML = '';
+  (parserCfgData.fabricasAlFinal || []).forEach((fab, idx) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip-item';
+    chip.innerHTML = `<span>${fab}</span><span class="chip-del" data-idx="${idx}" title="Eliminar">&times;</span>`;
+    cont.appendChild(chip);
+  });
+}
+
+$('chipsFabricasFinal').addEventListener('click', (e) => {
+  if (!e.target.classList.contains('chip-del')) return;
+  const idx = Number(e.target.dataset.idx);
+  parserCfgData.fabricasAlFinal.splice(idx, 1);
+  aplicarConfiguracionEnMemoria();
+  renderParserConfigUI();
+});
+
+$('btnAgregarFabricaFinal').addEventListener('click', () => {
+  const input = $('inputNuevaFabricaFinal');
+  const val = input.value.trim().toUpperCase();
+  if (!val) return;
+  if (!parserCfgData.fabricasAlFinal.includes(val)) {
+    parserCfgData.fabricasAlFinal.push(val);
+    aplicarConfiguracionEnMemoria();
+    renderParserConfigUI();
+  }
+  input.value = '';
+});
+
+// 3. Fábricas con sufijo
+function renderTablaSufijos() {
+  const tbody = $('tbodySufijos');
+  tbody.innerHTML = '';
+  (parserCfgData.fabricasConSufijo || []).forEach((s, idx) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><b>${s.base}</b></td>
+      <td><code>${s.sufijo}</code></td>
+      <td><span style="color:var(--accent-2); font-weight:600">${s.nombre}</span></td>
+      <td style="text-align: center;"><button type="button" class="btn ghost btn-del-sufijo" data-idx="${idx}" title="Eliminar">🗑️</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+$('tbodySufijos').addEventListener('click', (e) => {
+  const btn = e.target.closest('.btn-del-sufijo');
+  if (!btn) return;
+  const idx = Number(btn.dataset.idx);
+  parserCfgData.fabricasConSufijo.splice(idx, 1);
+  aplicarConfiguracionEnMemoria();
+  renderParserConfigUI();
+});
+
+$('btnAgregarSufijo').addEventListener('click', () => {
+  const base = $('sufijoBase').value.trim().toUpperCase();
+  const sufijo = $('sufijoPalabra').value.trim().toUpperCase();
+  const nombre = $('sufijoNombre').value.trim().toUpperCase();
+  if (!base || !sufijo || !nombre) {
+    alert('Completá los 3 campos para registrar el sufijo.');
+    return;
+  }
+  parserCfgData.fabricasConSufijo.push({ base, sufijo, nombre });
+  $('sufijoBase').value = '';
+  $('sufijoPalabra').value = '';
+  $('sufijoNombre').value = '';
+  aplicarConfiguracionEnMemoria();
+  renderParserConfigUI();
+});
+
+// 4. Palabras de rubro
+function renderChipsRubro() {
+  const cont = $('chipsRubro');
+  cont.innerHTML = '';
+  (parserCfgData.productWords || []).forEach((w, idx) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip-item';
+    chip.innerHTML = `<span>${w}</span><span class="chip-del" data-idx="${idx}" title="Eliminar">&times;</span>`;
+    cont.appendChild(chip);
+  });
+}
+
+$('chipsRubro').addEventListener('click', (e) => {
+  if (!e.target.classList.contains('chip-del')) return;
+  const idx = Number(e.target.dataset.idx);
+  parserCfgData.productWords.splice(idx, 1);
+  aplicarConfiguracionEnMemoria();
+  renderParserConfigUI();
+});
+
+$('btnAgregarRubro').addEventListener('click', () => {
+  const input = $('inputNuevoRubro');
+  const val = input.value.trim().toUpperCase();
+  if (!val) return;
+  if (!parserCfgData.productWords.includes(val)) {
+    parserCfgData.productWords.push(val);
+    aplicarConfiguracionEnMemoria();
+    renderParserConfigUI();
+  }
+  input.value = '';
+});
+
+// 5. Palabras genéricas
+function renderChipsGenericas() {
+  const cont = $('chipsGenericas');
+  cont.innerHTML = '';
+  (parserCfgData.genericWords || []).forEach((w, idx) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip-item';
+    chip.innerHTML = `<span>${w}</span><span class="chip-del" data-idx="${idx}" title="Eliminar">&times;</span>`;
+    cont.appendChild(chip);
+  });
+}
+
+$('chipsGenericas').addEventListener('click', (e) => {
+  if (!e.target.classList.contains('chip-del')) return;
+  const idx = Number(e.target.dataset.idx);
+  parserCfgData.genericWords.splice(idx, 1);
+  aplicarConfiguracionEnMemoria();
+  renderParserConfigUI();
+});
+
+$('btnAgregarGenerica').addEventListener('click', () => {
+  const input = $('inputNuevaGenerica');
+  const val = input.value.trim().toUpperCase();
+  if (!val) return;
+  if (!parserCfgData.genericWords.includes(val)) {
+    parserCfgData.genericWords.push(val);
+    aplicarConfiguracionEnMemoria();
+    renderParserConfigUI();
+  }
+  input.value = '';
+});
+
+// 6. Keywords de oferta
+function renderChipsOfertas() {
+  const cont = $('chipsOfertas');
+  cont.innerHTML = '';
+  (parserCfgData.offerKeywords || []).forEach((w, idx) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip-item';
+    chip.innerHTML = `<span>${w}</span><span class="chip-del" data-idx="${idx}" title="Eliminar">&times;</span>`;
+    cont.appendChild(chip);
+  });
+}
+
+$('chipsOfertas').addEventListener('click', (e) => {
+  if (!e.target.classList.contains('chip-del')) return;
+  const idx = Number(e.target.dataset.idx);
+  parserCfgData.offerKeywords.splice(idx, 1);
+  aplicarConfiguracionEnMemoria();
+  renderParserConfigUI();
+});
+
+$('btnAgregarOferta').addEventListener('click', () => {
+  const input = $('inputNuevaOferta');
+  const val = input.value.trim().toUpperCase();
+  if (!val) return;
+  if (!parserCfgData.offerKeywords.includes(val)) {
+    parserCfgData.offerKeywords.push(val);
+    aplicarConfiguracionEnMemoria();
+    renderParserConfigUI();
+  }
+  input.value = '';
+});
+
+// Sincronización en memoria y localStorage inmediata
+function aplicarConfiguracionEnMemoria() {
+  if (!parserCfgData) return;
+  localStorage.setItem(PARSER_CFG_STORAGE_KEY, JSON.stringify(parserCfgData));
+  if (window.LolaParser) {
+    window.LolaParser.updateParserConfig(parserCfgData);
+  }
+  // Invalida análisis previo si lo hubiera
+  adminItems = null;
+  adminPendientes = null;
+  $('adminAplicar').disabled = true;
+}
+
+// Guardar en la nube (POST /api/v1/admin/parser-config)
+$('btnGuardarParserCfg').addEventListener('click', async () => {
+  if (!parserCfgData) return;
+  try {
+    setParserCfgStatus('Guardando en D1…', true);
+    const res = await apiAdmin('/api/v1/admin/parser-config', {
+      body: { config: parserCfgData },
+    });
+    parserCfgVersion = res.version;
+    localStorage.setItem(PARSER_CFG_VERSION_KEY, String(parserCfgVersion));
+    localStorage.setItem(PARSER_CFG_STORAGE_KEY, JSON.stringify(parserCfgData));
+    $('parserConfigMeta').textContent = `✅ Sincronizado con D1 (versión ${parserCfgVersion})`;
+    setParserCfgStatus(`✅ Configuración guardada en D1 (versión ${res.version}).`, true);
+  } catch (err) {
+    setParserCfgStatus('❌ Error al guardar en la nube: ' + err.message, false);
+  }
+});
+
+// Reset a defaults
+$('btnResetParserCfg').addEventListener('click', () => {
+  if (!confirm('¿Restaurar todas las reglas y fábricas a los valores por defecto del sistema?')) return;
+  parserCfgData = inicializarParserDefaults();
+  aplicarConfiguracionEnMemoria();
+  renderParserConfigUI();
+  setParserCfgStatus('↺ Valores por defecto restaurados en memoria. Presioná "Guardar cambios en la nube" para sincronizar.', true);
+});
+
 // ── Inicial ─────────────────────────────────────────────────────────────────
 pintarCfg();
 renderAuth();
+cargarParserConfig();
