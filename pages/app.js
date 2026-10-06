@@ -23,6 +23,34 @@ const API_BASE = 'https://lola-backend.elladecide.workers.dev';
 
 const $ = (id) => document.getElementById(id);
 
+// ── Sistema de Notificaciones Toast Flotantes ──────────────────────────────
+function toast(mensaje, tipo = 'info', duracion = 3500) {
+  const container = $('toastContainer');
+  if (!container) return;
+
+  const el = document.createElement('div');
+  el.className = `toast ${tipo}`;
+  const icono = tipo === 'ok' ? '✅' : tipo === 'err' ? '❌' : 'ℹ️';
+
+  el.innerHTML = `
+    <span class="toast-icon">${icono}</span>
+    <span class="toast-msg">${mensaje}</span>
+    <button type="button" class="toast-close" title="Cerrar">&times;</button>
+  `;
+
+  const cerrar = () => {
+    el.classList.add('toast-hide');
+    setTimeout(() => el.remove(), 220);
+  };
+
+  el.querySelector('.toast-close').addEventListener('click', cerrar);
+  container.appendChild(el);
+
+  if (duracion > 0) {
+    setTimeout(cerrar, duracion);
+  }
+}
+
 // ── Config de precios (editable, persistida en localStorage) ────────────────
 // Defaults = los valores que siempre estuvieron hardcodeados.
 const CFG_KEY = 'lola_precios_cfg';
@@ -1192,9 +1220,12 @@ $('edGuardar').addEventListener('click', async () => {
     if (i >= 0) inventario[i] = indexar(producto);
     aplicarBusqueda();
     cerrarEdicion();
-    setInvStatus(`✅ "${desc}" actualizado — revisión ${r.revision} · las apps se resincronizan solas`, true);
+    const msg = `"${desc}" actualizado (rev. ${r.revision})`;
+    setInvStatus(`✅ ${msg} · las apps se resincronizan solas`, true);
+    toast(msg, 'ok');
   } catch (e) {
     setEdStatus('❌ ' + e.message, false);
+    toast(e.message, 'err');
   }
 });
 
@@ -1214,8 +1245,10 @@ async function borrarProducto(p) {
     inventario = inventario.filter((x) => x.codigo_unico !== p.codigo_unico);
     aplicarBusqueda();
     setInvStatus(`🗑️ "${p.descripcion}" eliminado — revisión ${r.revision}`, true);
+    toast(`"${p.descripcion}" eliminado (rev. ${r.revision})`, 'info');
   } catch (e) {
     setInvStatus('❌ ' + e.message, false);
+    toast(e.message, 'err');
   }
 }
 
@@ -1860,8 +1893,10 @@ $('btnGuardarParserCfg').addEventListener('click', async () => {
     localStorage.setItem(PARSER_CFG_STORAGE_KEY, JSON.stringify(parserCfgData));
     $('parserConfigMeta').textContent = `✅ Sincronizado con D1 (versión ${parserCfgVersion})`;
     setParserCfgStatus(`✅ Configuración guardada en D1 (versión ${res.version}).`, true);
+    toast(`Configuración del parser guardada en D1 (versión ${res.version})`, 'ok');
   } catch (err) {
     setParserCfgStatus('❌ Error al guardar en la nube: ' + err.message, false);
+    toast('Error al guardar en D1: ' + err.message, 'err');
   }
 });
 
@@ -1879,6 +1914,7 @@ $('btnResetParserCfg').addEventListener('click', async () => {
   aplicarConfiguracionEnMemoria();
   renderParserConfigUI();
   setParserCfgStatus('↺ Valores por defecto restaurados en memoria. Presioná "Guardar cambios en la nube" para sincronizar.', true);
+  toast('Reglas restauradas a valores de fábrica', 'info');
 });
 
 // ── Inicial ─────────────────────────────────────────────────────────────────
