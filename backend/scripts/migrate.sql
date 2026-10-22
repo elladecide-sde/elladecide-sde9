@@ -5,8 +5,13 @@
 -- Este archivo agrega las tablas de backup y el seed inicial.
 --
 -- IMPORTANTE: las tablas de backup son COPIAS exactas de `products` (mismo
--- esquema de 12 columnas). Si cambiás el modelo, cambialas ACÁ y en
+-- esquema de 13 columnas). Si cambiás el modelo, cambialas ACÁ y en
 -- schema.sql — si no, el INSERT ... SELECT del worker va a fallar.
+--
+-- Base existente sin columna `stock` → correr UNA VEZ:
+--   npx wrangler d1 execute lola-db --remote --command "ALTER TABLE products ADD COLUMN stock REAL NOT NULL DEFAULT 0"
+--   npx wrangler d1 execute lola-db --remote --command "ALTER TABLE products_bak ADD COLUMN stock REAL NOT NULL DEFAULT 0"
+--   npx wrangler d1 execute lola-db --remote --command "ALTER TABLE products_bak2 ADD COLUMN stock REAL NOT NULL DEFAULT 0"
 --
 -- Base vieja sin backup_state → correr UNA VEZ:
 --   npx wrangler d1 execute lola-db --remote \
@@ -31,6 +36,7 @@ CREATE TABLE IF NOT EXISTS products_bak (
   lista4       REAL NOT NULL DEFAULT 0,
   categoria    TEXT NOT NULL DEFAULT '',
   oferta       INTEGER NOT NULL DEFAULT 0,
+  stock        REAL NOT NULL DEFAULT 0,
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -47,6 +53,7 @@ CREATE TABLE IF NOT EXISTS products_bak2 (
   lista4       REAL NOT NULL DEFAULT 0,
   categoria    TEXT NOT NULL DEFAULT '',
   oferta       INTEGER NOT NULL DEFAULT 0,
+  stock        REAL NOT NULL DEFAULT 0,
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -64,6 +71,6 @@ INSERT OR IGNORE INTO metadata (key)
 VALUES ('catalog');
 
 -- Poblar bak con el catálogo activo SOLO si bak está vacío (primera migración).
-INSERT INTO products_bak (codigo_unico, fabrica, codigo, descripcion, costo_neto, costo_iva, lista1, lista2, lista3, lista4, categoria, oferta, updated_at)
-SELECT codigo_unico, fabrica, codigo, descripcion, costo_neto, costo_iva, lista1, lista2, lista3, lista4, categoria, oferta, updated_at FROM products
+INSERT INTO products_bak (codigo_unico, fabrica, codigo, descripcion, costo_neto, costo_iva, lista1, lista2, lista3, lista4, categoria, oferta, stock, updated_at)
+SELECT codigo_unico, fabrica, codigo, descripcion, costo_neto, costo_iva, lista1, lista2, lista3, lista4, categoria, oferta, stock, updated_at FROM products
 WHERE (SELECT COUNT(*) FROM products_bak) = 0;

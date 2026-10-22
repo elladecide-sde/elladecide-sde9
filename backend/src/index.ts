@@ -47,8 +47,8 @@
 // sube revisión + hash. Si algo falla, todo revierte (no se pierde el backup).
 //
 // LÍMITE D1 que manda el tamaño de los INSERT multi-fila:
-//   "Maximum bound parameters per query = 100" → con 12 columnas por fila van
-//   8 filas por statement (8 × 12 = 96 ≤ 100). No subir.
+//   "Maximum bound parameters per query = 100" → con 13 columnas por fila van
+//   7 filas por statement (7 × 13 = 91 ≤ 100). No subir.
 // ============================================================================
 
 import { bearerToken, generateSalt, hashPassword, safeEqual, signJwt, verifyJwt, verifyPassword } from './auth';
@@ -69,11 +69,11 @@ type Product = Producto;
 
 const TOKEN_TTL_SEC = 24 * 60 * 60; // 24 horas
 const BATCH_LIMIT = 100;            // D1 limita los batches a 100 statements
-const INSERT_CHUNK = 8;             // 8 filas × 12 columnas = 96 params (techo D1: 100)
+const INSERT_CHUNK = 7;             // 7 filas × 13 columnas = 91 params (techo D1: 100)
 const BAK = ['products_bak', 'products_bak2'] as const;
 
-const PRODUCT_COLS = 'codigo_unico, fabrica, codigo, descripcion, costo_neto, costo_iva, lista1, lista2, lista3, lista4, categoria, oferta';
-const LIST_COLS = '(codigo_unico, fabrica, codigo, descripcion, costo_neto, costo_iva, lista1, lista2, lista3, lista4, categoria, oferta)';
+const PRODUCT_COLS = 'codigo_unico, fabrica, codigo, descripcion, costo_neto, costo_iva, lista1, lista2, lista3, lista4, categoria, oferta, stock';
+const LIST_COLS = '(codigo_unico, fabrica, codigo, descripcion, costo_neto, costo_iva, lista1, lista2, lista3, lista4, categoria, oferta, stock)';
 
 export type SyncMode = 'predeterminado' | 'descripcion-costos';
 const SYNC_MODES: SyncMode[] = ['predeterminado', 'descripcion-costos'];
@@ -119,6 +119,7 @@ interface RowProducto {
   lista4: number;
   categoria: string;
   oferta: number; // 0/1 en D1, boolean en el DTO
+  stock: number;
   updated_at: string;
 }
 
@@ -152,6 +153,7 @@ const rowToProduct = (r: RowProducto): Product => ({
   fabrica: r.fabrica ?? '',
   codigo: r.codigo ?? '',
   oferta: r.oferta === 1,
+  stock: Number(r.stock) || 0,
 });
 
 /**
@@ -173,10 +175,10 @@ async function recomputeHash(db: D1Database): Promise<string> {
   return hash;
 }
 
-/** Genera statements INSERT multi-fila (8 filas por statement = 96 params). */
+/** Genera statements INSERT multi-fila (7 filas por statement = 91 params). */
 function multiInsert(db: D1Database, table: string, products: Product[]): D1PreparedStatement[] {
   const stmts: D1PreparedStatement[] = [];
-  const placeholders = `(${new Array(12).fill('?').join(', ')})`;
+  const placeholders = `(${new Array(13).fill('?').join(', ')})`;
   for (let i = 0; i < products.length; i += INSERT_CHUNK) {
     const slice = products.slice(i, i + INSERT_CHUNK);
     const values: Array<string | number> = [];
@@ -195,6 +197,7 @@ function multiInsert(db: D1Database, table: string, products: Product[]): D1Prep
         Number(l[3]) || 0,
         p.categoria || '',
         p.oferta ? 1 : 0,
+        Number(p.stock) || 0,
       );
     }
     stmts.push(
@@ -355,7 +358,20 @@ async function requireAdmin(request: Request, env: Env): Promise<{ ok: boolean; 
 async function replaceCatalog(db: D1Database, products: Product[]) {
   const meta = await getMetadata(db);
   const newRevision = meta.revision + 1;
-  const hash = await computeCatalogHash(products.map(toRef));
+
+  // Si el import viene de un Excel sin columna de stock (stock === undefined),
+  // rescatamos el stock vigente en D1 para no pisarlo con 0.
+  let finalProducts = products;
+  if (products.some((p) => p.stock === undefined)) {
+    const prevRows = await db.prepare('SELECT codigo_unico, stock FROM products').all<{ codigo_unico: string; stock: number }>();
+    const prevStock = new Map<string, number>((prevRows.results ?? []).map((r) => [r.codigo_unico, Number(r.stock) || 0]));
+    finalProducts = products.map((p) => ({
+      ...p,
+      stock: p.stock !== undefined ? p.stock : (prevStock.get(p.codigo_unico) ?? 0),
+    }));
+  }
+
+  const hash = await computeCatalogHash(finalProducts.map(toRef));
 
   // Backup: copia el catálogo activo al slot más viejo.
   const target = meta.newest === 'bak' ? 'bak2' : 'bak';
@@ -366,32 +382,42 @@ async function replaceCatalog(db: D1Database, products: Product[]) {
     db.prepare(`DELETE FROM ${bakTable}`),
     db.prepare(`INSERT INTO ${bakTable} ${LIST_COLS} SELECT ${PRODUCT_COLS} FROM products`),
     db.prepare('DELETE FROM products'),
-    ...multiInsert(db, 'products', products),
+    ...multiInsert(db, 'products', finalProducts),
     metaUpdate(db, newRevision, hash, nuevoState),
   ];
   await runBatch(db, batch);
   return { revision: newRevision, hash, backup: target };
 }
 
-/** Upsert parcial (sin wipe ni backup): edición de 1 o N productos. */
-async function upsertProducts(db: D1Database, products: Product[]) {
+/** Upsert parcial y/o bajas atómicas (sin wipe ni backup): edición de 1 o N productos + bajas. */
+async function upsertProducts(db: D1Database, products: Product[], deletedCodes: string[] = []) {
   const meta = await getMetadata(db);
   const newRevision = meta.revision + 1;
 
   const res = await db.prepare(`SELECT ${PRODUCT_COLS} FROM products`).all<RowProducto>();
   const mapa = new Map<string, Product>((res.results ?? []).map((r) => [r.codigo_unico, rowToProduct(r)]));
-  for (const p of products) mapa.set(p.codigo_unico, p);
+  for (const code of deletedCodes) mapa.delete(code);
+  const normalizedForUpsert: Product[] = products.map((p) => {
+    const prev = mapa.get(p.codigo_unico);
+    const stockFinal = p.stock !== undefined ? p.stock : (prev?.stock ?? 0);
+    const merged: Product = { ...p, stock: stockFinal };
+    mapa.set(p.codigo_unico, merged);
+    return merged;
+  });
   const hash = await computeCatalogHash([...mapa.values()].map(toRef));
 
   const batch: D1PreparedStatement[] = [
     metaUpdate(db, newRevision, hash, JSON.stringify({ newest: meta.newest })),
   ];
-  for (const p of products) {
+  for (const code of deletedCodes) {
+    batch.push(db.prepare('DELETE FROM products WHERE codigo_unico = ?').bind(code));
+  }
+  for (const p of normalizedForUpsert) {
     const l = p.precios;
     batch.push(
       db
         .prepare(
-          `INSERT INTO products ${LIST_COLS} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO products ${LIST_COLS} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(codigo_unico) DO UPDATE SET
              fabrica = excluded.fabrica,
              codigo = excluded.codigo,
@@ -404,6 +430,7 @@ async function upsertProducts(db: D1Database, products: Product[]) {
              lista4 = excluded.lista4,
              categoria = excluded.categoria,
              oferta = excluded.oferta,
+             stock = excluded.stock,
              updated_at = datetime('now')`,
         )
         .bind(
@@ -419,11 +446,12 @@ async function upsertProducts(db: D1Database, products: Product[]) {
           Number(l[3]) || 0,
           p.categoria || '',
           p.oferta ? 1 : 0,
+          Number(p.stock) || 0,
         ),
     );
   }
   await runBatch(db, batch);
-  return { revision: newRevision, hash };
+  return { revision: newRevision, hash, upserted: normalizedForUpsert.length, deleted: deletedCodes.length };
 }
 
 async function adminDeleteProduct(db: D1Database, codigoUnico: string) {
@@ -535,6 +563,7 @@ async function handleSync(db: D1Database, params: URLSearchParams) {
     descripcion: r.descripcion,
     costo_neto: r.costo_neto,
     oferta: r.oferta === 1,
+    stock: Number(r.stock) || 0,
   }, q.query.fields));
 
   return json(conExtras({ revision: meta.revision, hash: meta.hash, products }, q.query, total, serverTime));
@@ -569,6 +598,7 @@ async function handleSyncV2(db: D1Database, params: URLSearchParams) {
     fabrica: r.fabrica ?? '',
     codigo: r.codigo ?? '',
     oferta: r.oferta === 1,
+    stock: Number(r.stock) || 0,
     costo_neto: r.costo_neto,
     costo_iva: r.costo_iva,
     updated_at: r.updated_at,
@@ -724,6 +754,9 @@ function normalizeProducts(body: unknown): Product[] {
     const derivado = derivarCostos(precios, PRECIOS_DEFAULT);
     const costo_neto = Number.isFinite(Number(p.costo_neto)) ? Number(p.costo_neto) : derivado.costo_neto;
     const costo_iva = Number.isFinite(Number(p.costo_iva)) ? Number(p.costo_iva) : derivado.costo_iva;
+    const stock = p.stock !== undefined && p.stock !== null && Number.isFinite(Number(p.stock))
+      ? Number(p.stock)
+      : undefined;
 
     return {
       codigo_unico: p.codigo_unico.trim(),
@@ -735,6 +768,7 @@ function normalizeProducts(body: unknown): Product[] {
       fabrica: fabPersistida(typeof p.fabrica === 'string' ? p.fabrica : ''),
       codigo: typeof p.codigo === 'string' ? p.codigo.trim() : '',
       oferta: p.oferta === true || p.oferta === 1 || p.oferta === 'true',
+      stock,
     };
   });
 }
@@ -774,13 +808,18 @@ export default {
         const auth = await requireAdmin(request, env);
         if (!auth.ok) res = err(auth.reason ?? 'No autorizado', 401);
         else {
-          const body = (await request.json()) as { products?: unknown; replace?: unknown };
-          const productos = normalizeProducts(body);
+          const body = (await request.json()) as { products?: unknown; deleted?: unknown; replace?: unknown };
+          const deletedCodes = Array.isArray(body?.deleted)
+            ? body.deleted.map((c) => String(c).trim()).filter(Boolean)
+            : [];
           if (body?.replace === true) {
+            const productos = normalizeProducts(body);
             if (productos.length === 0) res = err('Reemplazo con catálogo vacío', 400);
             else res = json(await replaceCatalog(env.DB, productos));
           } else {
-            res = json(await upsertProducts(env.DB, productos));
+            const hasProducts = Array.isArray(body) ? body.length > 0 : Array.isArray(body?.products) && body.products.length > 0;
+            const productos = hasProducts || deletedCodes.length === 0 ? normalizeProducts(body) : [];
+            res = json(await upsertProducts(env.DB, productos, deletedCodes));
           }
         }
       } else if (method === 'POST' && path === '/api/v1/admin/import') {

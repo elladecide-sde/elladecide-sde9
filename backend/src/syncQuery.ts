@@ -3,13 +3,13 @@ export const DEFAULT_LIMIT = 100;
 
 /** Campos que admite ?fields= en GET /api/v1/sync. */
 export const FIELDS_V1 = [
-  'codigo_unico', 'nombre', 'precios', 'fabrica', 'codigo', 'descripcion', 'costo_neto', 'oferta',
+  'codigo_unico', 'nombre', 'precios', 'fabrica', 'codigo', 'descripcion', 'costo_neto', 'oferta', 'stock',
 ] as const;
 
 /** Campos que admite ?fields= en GET /api/v1/sync/v2 (modo predeterminado). */
 export const FIELDS_V2 = [
   'codigo_unico', 'descripcion', 'precios', 'categoria', 'fabrica', 'codigo',
-  'oferta', 'costo_neto', 'costo_iva', 'updated_at',
+  'oferta', 'stock', 'costo_neto', 'costo_iva', 'updated_at',
 ] as const;
 
 /** Campos que admite ?fields= en GET /api/v1/sync/v2 (modo descripcion-costos). */

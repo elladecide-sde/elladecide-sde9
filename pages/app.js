@@ -495,7 +495,7 @@ function renderPreview(r) {
   const tabla = document.createElement('table');
   const thead = document.createElement('thead');
   const trh = document.createElement('tr');
-  ['Código', 'Descripción', 'Costo neto', 'Costo+IVA', 'L1', 'L2', 'L3', 'L4'].forEach((t) => {
+  ['Código', 'Descripción', 'Stock', 'Costo neto', 'Costo+IVA', 'L1', 'L2', 'L3', 'L4'].forEach((t) => {
     const th = document.createElement('th');
     th.textContent = t;
     trh.appendChild(th);
@@ -509,6 +509,7 @@ function renderPreview(r) {
     const celdas = [
       p.codigo_unico,
       p.descripcion,
+      Number(p.stock) || 0,
       fmt(p.costo_neto),
       fmt(p.costo_iva),
       ...p.precios.map((x) => Number(x).toLocaleString('es-AR')),
@@ -746,6 +747,7 @@ async function cargarInventario() {
         fabrica: p.fabrica || '',
         codigo: p.codigo || '',
         oferta: p.oferta === true,
+        stock: Number(p.stock) || 0,
       }));
     } else {
       // Modo "descripcion-costos": no trae código ni metadatos → contrato v1
@@ -765,6 +767,7 @@ async function cargarInventario() {
         fabrica: '',
         codigo: '',
         oferta: false,
+        stock: Number(p.stock) || 0,
       }));
     }
 
@@ -857,6 +860,12 @@ function filaInventario(p) {
     ofBadge.textContent = '🔥 OFERTA';
     metaRow.appendChild(ofBadge);
   }
+
+  const stVal = Number(p.stock) || 0;
+  const stockBadge = document.createElement('span');
+  stockBadge.className = 'inv-badge stock ' + (stVal > 0 ? 'in-stock' : 'out-stock');
+  stockBadge.textContent = stVal > 0 ? `📦 Stock: ${stVal}` : '⚠️ Sin Stock (0)';
+  metaRow.appendChild(stockBadge);
 
   const desc = document.createElement('span');
   desc.className = 'inv-desc';
@@ -1091,6 +1100,7 @@ function abrirEdicion(p) {
   $('edFab').value = p.fabrica || SIN_FABRICA;
   $('edCodFab').value = p.codigo || '';
   $('edOferta').checked = !!p.oferta;
+  $('edStock').value = Number(p.stock) || 0;
 
   // Costos
   edCostoManual = false;
@@ -1194,6 +1204,7 @@ $('edGuardar').addEventListener('click', async () => {
   if (!desc) { setEdStatus('La descripción no puede quedar vacía', false); return; }
   if (l.some((n) => !Number.isFinite(n) || n <= 0)) { setEdStatus('Los 4 precios tienen que ser números > 0', false); return; }
 
+  const prevItem = inventario ? inventario.find((x) => x.codigo_unico === codigo) : null;
   const producto = {
     codigo_unico: codigo,
     descripcion: desc,
@@ -1202,6 +1213,9 @@ $('edGuardar').addEventListener('click', async () => {
     fabrica: $('edFab').value.trim(),
     codigo: $('edCodFab').value.trim(),
     oferta: $('edOferta').checked,
+    stock: $('edStock').value.trim() !== '' && Number.isFinite(Number($('edStock').value))
+      ? Number($('edStock').value)
+      : (prevItem && Number.isFinite(Number(prevItem.stock)) ? Number(prevItem.stock) : 0),
   };
   let neto = edCostoNeto;
   let iva = edCostoIva;

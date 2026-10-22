@@ -34,6 +34,10 @@ export interface Producto {
    * Opcional por compat (mismo motivo que `codigo`); en D1 se persiste 0/1.
    */
   oferta?: boolean;
+  /**
+   * Stock disponible en AdmGlobal. Opcional por compat (default 0).
+   */
+  stock?: number;
 }
 
 export interface PreciosCfg {

@@ -78,11 +78,12 @@ CREATE TABLE IF NOT EXISTS products (
   lista4       REAL NOT NULL DEFAULT 0,
   categoria    TEXT NOT NULL DEFAULT '',  -- rubro (NO confundir con oferta)
   oferta       INTEGER NOT NULL DEFAULT 0,-- 1 = artículo en oferta → las 4 listas iguales
+  stock        REAL NOT NULL DEFAULT 0,   -- stock disponible en AdmGlobal
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- ── Backups rotativos (2 versiones anteriores del catálogo) ─────────────────
---   Mismo esquema que products (12 columnas). Antes de cada wipe, el worker
+--   Mismo esquema que products (13 columnas). Antes de cada wipe, el worker
 --   copia el catálogo activo al backup más viejo (según
 --   metadata.backup_state). Sirven para deshacer un upload equivocado vía
 --   POST /api/v1/admin/rollback.
@@ -99,6 +100,7 @@ CREATE TABLE IF NOT EXISTS products_bak (
   lista4       REAL NOT NULL DEFAULT 0,
   categoria    TEXT NOT NULL DEFAULT '',
   oferta       INTEGER NOT NULL DEFAULT 0,
+  stock        REAL NOT NULL DEFAULT 0,
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -115,6 +117,7 @@ CREATE TABLE IF NOT EXISTS products_bak2 (
   lista4       REAL NOT NULL DEFAULT 0,
   categoria    TEXT NOT NULL DEFAULT '',
   oferta       INTEGER NOT NULL DEFAULT 0,
+  stock        REAL NOT NULL DEFAULT 0,
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

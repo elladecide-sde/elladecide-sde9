@@ -22,6 +22,8 @@ export interface OpcionesImport {
   colCategoria?: number;
   /** Columna de fábrica (opcional). -1 / ausente = vacío. */
   colFabrica?: number;
+  /** Columna de stock (opcional). -1 / ausente = 0. */
+  colStock?: number;
   skip?: number;
   marcas?: string[];
   iva?: number;
@@ -74,6 +76,7 @@ export function importCatalogo(filas: unknown[][], opts: OpcionesImport = {}): R
   const colCodigo = opts.colCodigo ?? -1;
   const colCategoria = opts.colCategoria ?? -1;
   const colFabrica = opts.colFabrica ?? -1;
+  const colStock = opts.colStock ?? -1;
   const skip = opts.skip ?? 1;
   const ofertaKeywords = opts.ofertaKeywords ?? DEFAULT_OFERTA;
 
@@ -101,7 +104,7 @@ export function importCatalogo(filas: unknown[][], opts: OpcionesImport = {}): R
   }
 
   // ── Parseo de filas ──
-  const filasOk: Array<{ nombre: string; precio: number; codigoExcel: string; categoria: string; fabrica: string }> = [];
+  const filasOk: Array<{ nombre: string; precio: number; codigoExcel: string; categoria: string; fabrica: string; stock?: number }> = [];
   const rechazadas: Array<{ fila: number; motivo: string }> = [];
   for (let i = skip; i < filas.length; i++) {
     const row = filas[i];
@@ -130,12 +133,15 @@ export function importCatalogo(filas: unknown[][], opts: OpcionesImport = {}): R
         codigoExcel = Number.isNaN(Number(raw)) ? raw : String(Math.trunc(Number(raw)));
       }
     }
+    const rawStock = colStock >= 0 ? Number(row[colStock]) : undefined;
+    const stock = rawStock !== undefined && Number.isFinite(rawStock) ? rawStock : undefined;
     filasOk.push({
       nombre,
       precio,
       codigoExcel,
       categoria: leerTexto(row, colCategoria),
       fabrica: leerTexto(row, colFabrica),
+      stock,
     });
   }
 
@@ -175,6 +181,7 @@ export function importCatalogo(filas: unknown[][], opts: OpcionesImport = {}): R
       fabrica: f.fabrica,
       codigo: f.codigoExcel,
       oferta,
+      stock: f.stock,
     });
   }
 

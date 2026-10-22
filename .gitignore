@@ -21,3 +21,23 @@ android/.idea/
 # Sistema
 .DS_Store
 Thumbs.db
+
+# AdmGlobal MDB & Sync Agent runtime
+*.mdb
+*.MDB
+*.ldb
+*.laccdb
+sync-agent/latest/
+sync-agent/backups/
+sync-agent/exports/
+sync-agent/logs/
+sync-agent/state/
+sync-agent/config/
+sync-agent/build/
+sync-agent/dist/
+sync-agent/__pycache__/
+
+# Logs & Temp
+*.log
+*.tar.gz
+backend/smoke-out.txt

@@ -18,10 +18,10 @@ test('sin query params → query vacía (handler responde idéntico a antes)', (
   if (r.ok) assert.deepEqual(r.query, {});
 });
 
-test('fields: limpia, recorta espacios y deduplica', () => {
-  const r = parse('fields=codigo_unico, descripcion ,codigo_unico,');
+test('fields: limpia, recorta espacios y deduplica (incluye stock)', () => {
+  const r = parse('fields=codigo_unico, descripcion ,stock,codigo_unico,');
   assert.equal(r.ok, true);
-  if (r.ok) assert.deepEqual(r.query.fields, ['codigo_unico', 'descripcion']);
+  if (r.ok) assert.deepEqual(r.query.fields, ['codigo_unico', 'descripcion', 'stock']);
 });
 
 test('fields: desconocido → error con la lista de válidos', () => {
