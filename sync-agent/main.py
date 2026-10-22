@@ -456,6 +456,8 @@ class SyncAppWindow(tk.Tk):
             self.coordinator.claim_master()
 
         self._heartbeat_job = None
+        self._tray_icon = None
+        self._init_system_tray()
 
         self.bind("<Unmap>", self._on_window_unmap)
         self.bind("<Map>", self._on_window_map)
@@ -1119,7 +1121,7 @@ class SyncAppWindow(tk.Tk):
         self.config_obj.excel_path = self.excel_entry.get().strip()
         self.config_obj.api_url = self.api_url_entry.get().strip()
         self.config_obj.api_user = self.api_user_entry.get().strip() or "admin"
-        self.config_obj.api_password = self.api_pwd_entry.get()
+        self.config_obj.api_password = self.api_pwd_entry.get().strip()
         self.config_obj.save()
 
     def _on_path_changed(self) -> None:
@@ -1445,11 +1447,94 @@ class SyncAppWindow(tk.Tk):
                 msg += f" · Última: {ago_str}"
             self.countdown_lbl.configure(text=msg, fg="#94a3b8")
 
+    def _create_tray_image(self):
+        try:
+            from PIL import Image, ImageDraw
+            img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            # Fondo redondeado celeste/azul eléctrico moderno
+            d.rounded_rectangle((4, 4, 60, 60), radius=16, fill="#0284c7", outline="#38bdf8", width=3)
+            # Letra 'L' estilizada y nítida en blanco
+            d.rectangle((20, 16, 26, 46), fill="#ffffff")
+            d.rectangle((20, 40, 44, 46), fill="#ffffff")
+            return img
+        except Exception as e:
+            logging.warning(f"No se pudo crear imagen de bandeja: {e}")
+            return None
+
+    def _init_system_tray(self) -> None:
+        try:
+            import pystray
+            from pystray import MenuItem as item
+
+            img = self._create_tray_image()
+            if not img:
+                return
+
+            menu = pystray.Menu(
+                item("🖥️ Abrir LOLA Agente", lambda icon, it: self.after(0, self._show_window_from_tray), default=True),
+                item("⚡ Sincronizar Cambios (Delta)", lambda icon, it: self.after(0, lambda: self.trigger_sync(force_full=False))),
+                item("☁️ Subida Completa", lambda icon, it: self.after(0, lambda: self.trigger_sync(force_full=True))),
+                pystray.Menu.SEPARATOR,
+                item("🛑 Salir del Agente", lambda icon, it: self.after(0, self._quit_completely)),
+            )
+
+            self._tray_icon = pystray.Icon(
+                "LolaSyncAgente",
+                img,
+                "LOLA · Agente Sincronizador",
+                menu=menu,
+            )
+            self._tray_icon.run_detached()
+            logging.info("Ícono de bandeja del sistema (System Tray) activado.")
+        except Exception as e:
+            logging.warning(f"No se pudo inicializar ícono en bandeja del sistema: {e}")
+            self._tray_icon = None
+
+    def _show_window_from_tray(self) -> None:
+        try:
+            self.deiconify()
+            self.lift()
+            self.focus_force()
+            try:
+                import ctypes
+                hwnd = ctypes.windll.user32.FindWindowW(None, WINDOW_TITLE)
+                if hwnd:
+                    ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                    ctypes.windll.user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+        except Exception as e:
+            logging.warning(f"Error al restaurar ventana desde bandeja: {e}")
+
+    def _notify_tray(self, title: str, message: str) -> None:
+        if self._tray_icon is not None:
+            try:
+                self._tray_icon.notify(message, title)
+            except Exception:
+                pass
+
+    def _stop_system_tray(self) -> None:
+        if self._tray_icon is not None:
+            try:
+                self._tray_icon.stop()
+            except Exception:
+                pass
+            self._tray_icon = None
+
     def _on_window_close(self) -> None:
+        try:
+            self._sync_fields_to_config()
+        except Exception:
+            pass
         if self.coordinator.is_master and self.config_obj.sync_mode == "automatica" and self.config_obj.sync_interval_minutes > 0:
             self.withdraw()
             logging.info(
                 f"Ventana oculta a segundo plano. El agente sigue sincronizando cada {self.config_obj.sync_interval_minutes} min."
+            )
+            self._notify_tray(
+                "LOLA Agente activo en segundo plano",
+                f"Sigue sincronizando cada {self.config_obj.sync_interval_minutes} min.\nHacé doble clic en el ícono de la bandeja para abrir la ventana.",
             )
         else:
             self.destroy()
@@ -1466,6 +1551,10 @@ class SyncAppWindow(tk.Tk):
             )
             if not ans:
                 return
+        try:
+            self._sync_fields_to_config()
+        except Exception:
+            pass
         self.destroy()
         sys.exit(0)
 
@@ -1616,6 +1705,11 @@ class SyncAppWindow(tk.Tk):
         self._last_sync_time = datetime.now()
         self._refresh_state_summary()
         self._schedule_next_timer()
+        if self._tray_icon is not None:
+            try:
+                self._tray_icon.title = f"LOLA Agente · {mode.upper()} ({now_str})"
+            except Exception:
+                pass
 
     def _open_logs(self) -> None:
         log_file = os.path.join(self.config_obj.logs_dir, "sync.log")
@@ -1657,6 +1751,7 @@ class SyncAppWindow(tk.Tk):
             )
 
     def destroy(self) -> None:
+        self._stop_system_tray()
         if self._heartbeat_job is not None:
             try:
                 self.after_cancel(self._heartbeat_job)
