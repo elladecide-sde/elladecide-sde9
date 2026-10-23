@@ -35,6 +35,9 @@ sync-agent/exports/
 sync-agent/logs/
 sync-agent/state/
 sync-agent/config/
+# PyInstaller / Builds
+build/
+dist/
 sync-agent/build/
 sync-agent/dist/
 sync-agent/__pycache__/
