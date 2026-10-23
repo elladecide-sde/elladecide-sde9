@@ -27,6 +27,8 @@ Thumbs.db
 *.MDB
 *.ldb
 *.laccdb
+__pycache__/
+*.py[cod]
 sync-agent/latest/
 sync-agent/backups/
 sync-agent/exports/

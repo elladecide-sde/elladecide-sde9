@@ -288,6 +288,9 @@ function bindRollback(btnId, backup, label) {
       setRollbackStatus(`Restaurando ${label}…`, true);
       const r = await rollbackCatalogo(backup);
       inventario = null; // el catálogo cambió por completo
+      if (r.revision) invUltimaRevision = r.revision;
+      if (r.hash) invUltimoHash = r.hash;
+      invUltimaFecha = r.updated_at || new Date().toISOString();
       setRollbackStatus(`✅ Restaurado ${r.restaurado} — revisión ${r.revision} · hash ${(r.hash || '').slice(0, 8)}…`, true);
     } catch (e) {
       setRollbackStatus('❌ ' + e.message, false);
@@ -481,6 +484,9 @@ $('subir').addEventListener('click', async () => {
     setStatus('Subiendo (reemplazo del catálogo)…', true);
     const r = await subirCatalogo(productosGenerados);
     inventario = null; // el catálogo cambió por completo
+    if (r.revision) invUltimaRevision = r.revision;
+    if (r.hash) invUltimoHash = r.hash;
+    invUltimaFecha = r.updated_at || new Date().toISOString();
     setStatus(`☁️ Catálogo reemplazado — revisión ${r.revision} · hash ${(r.hash || '').slice(0, 8)}… · backup ${r.backup}`, true);
   } catch (err) {
     setStatus('❌ ' + err.message, false);
@@ -720,6 +726,38 @@ function fuzzyScore(query, item) {
   return total;
 }
 
+function formatearFecha(str) {
+  if (!str) return '';
+  try {
+    const raw = String(str).trim();
+    if (!raw) return '';
+    // SQLite datetime('now') es "YYYY-MM-DD HH:MM:SS" (UTC)
+    const iso = raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return raw;
+    const dia = String(d.getDate()).padStart(2, '0');
+    const mes = String(d.getMonth() + 1).padStart(2, '0');
+    const anio = d.getFullYear();
+    const hora = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return `${dia}/${mes}/${anio} ${hora}:${min}`;
+  } catch {
+    return str;
+  }
+}
+
+let invUltimaRevision = '';
+let invUltimoHash = '';
+let invUltimaFecha = '';
+
+function pintarInvMeta() {
+  const total = inventario ? inventario.length : 0;
+  const fechaFmt = formatearFecha(invUltimaFecha);
+  const metaFecha = fechaFmt ? ` · act. ${fechaFmt}` : '';
+  const meta = `rev ${invUltimaRevision || '—'} · hash ${String(invUltimoHash || '').slice(0, 8)}…${metaFecha}`;
+  $('invMeta').textContent = `${total} artículos · ${meta}`;
+}
+
 async function cargarInventario() {
   if (invCargando) return;
   invCargando = true;
@@ -729,6 +767,7 @@ async function cargarInventario() {
     let items = [];
     let rev = '';
     let hash = '';
+    let updatedAt = '';
     let sinMeta = false;
 
     const res = await fetch(`${API_BASE}/api/v1/sync/v2`);
@@ -737,6 +776,7 @@ async function cargarInventario() {
 
     if (j.format === 'predeterminado' && Array.isArray(j.products)) {
       rev = j.revision; hash = j.hash;
+      updatedAt = j.updated_at || '';
       items = j.products.map((p) => ({
         codigo_unico: String(p.codigo_unico ?? ''),
         descripcion: String(p.descripcion ?? ''),
@@ -748,6 +788,7 @@ async function cargarInventario() {
         codigo: p.codigo || '',
         oferta: p.oferta === true,
         stock: Number(p.stock) || 0,
+        updated_at: p.updated_at || '',
       }));
     } else {
       // Modo "descripcion-costos": no trae código ni metadatos → contrato v1
@@ -757,6 +798,7 @@ async function cargarInventario() {
       if (!r1.ok) throw new Error(`HTTP ${r1.status}`);
       const j1 = await r1.json();
       rev = j1.revision; hash = j1.hash;
+      updatedAt = j1.updated_at || '';
       items = (j1.products || []).map((p) => ({
         codigo_unico: String(p.codigo_unico ?? ''),
         descripcion: String(p.nombre ?? ''),
@@ -768,14 +810,26 @@ async function cargarInventario() {
         codigo: '',
         oferta: false,
         stock: Number(p.stock) || 0,
+        updated_at: p.updated_at || '',
       }));
+    }
+
+    // Si la raíz no trajo updated_at, buscamos el valor más reciente de los productos
+    if (!updatedAt && items.length > 0) {
+      for (const it of items) {
+        if (it.updated_at && (!updatedAt || it.updated_at > updatedAt)) {
+          updatedAt = it.updated_at;
+        }
+      }
     }
 
     inventario = items.map(indexar);
     invSinMeta = sinMeta;
+    invUltimaRevision = rev;
+    invUltimoHash = hash;
+    invUltimaFecha = updatedAt;
 
-    const meta = `rev ${rev} · hash ${String(hash || '').slice(0, 8)}…`;
-    $('invMeta').textContent = `${inventario.length} artículos · ${meta}`;
+    pintarInvMeta();
     aplicarBusqueda();
     setInvStatus(sinMeta
       ? '⚠️ El modo de sync actual no expone categoría/fábrica: se pueden ver y borrar, pero no editar.'
@@ -1232,6 +1286,10 @@ $('edGuardar').addEventListener('click', async () => {
     const r = await apiAdmin('/api/v1/admin/products', { body: { products: [producto] } });
     const i = inventario.findIndex((x) => x.codigo_unico === codigo);
     if (i >= 0) inventario[i] = indexar(producto);
+    if (r.revision) invUltimaRevision = r.revision;
+    if (r.hash) invUltimoHash = r.hash;
+    invUltimaFecha = r.updated_at || new Date().toISOString();
+    pintarInvMeta();
     aplicarBusqueda();
     cerrarEdicion();
     const msg = `"${desc}" actualizado (rev. ${r.revision})`;
@@ -1257,6 +1315,10 @@ async function borrarProducto(p) {
     setInvStatus(`Eliminando ${p.codigo_unico}…`, true);
     const r = await apiAdmin(`/api/v1/admin/products/${encodeURIComponent(p.codigo_unico)}`, { method: 'DELETE' });
     inventario = inventario.filter((x) => x.codigo_unico !== p.codigo_unico);
+    if (r.revision) invUltimaRevision = r.revision;
+    if (r.hash) invUltimoHash = r.hash;
+    invUltimaFecha = r.updated_at || new Date().toISOString();
+    pintarInvMeta();
     aplicarBusqueda();
     setInvStatus(`🗑️ "${p.descripcion}" eliminado — revisión ${r.revision}`, true);
     toast(`"${p.descripcion}" eliminado (rev. ${r.revision})`, 'info');
@@ -1935,3 +1997,239 @@ $('btnResetParserCfg').addEventListener('click', async () => {
 pintarCfg();
 renderAuth();
 cargarParserConfig();
+
+// ════════════════════════════════════════════════════════════════════════════
+// Guía de Configuración y Conexión a la API (Humano + MD para Agentes)
+// ════════════════════════════════════════════════════════════════════════════
+
+function getGuiaMarkdown() {
+  return `# LOLA Catalog API — Guía de Integración para Agentes y Servicios
+
+## 1. Visión General
+El backend de LOLA gestiona el catálogo de productos con arquitectura **offline-first**, alojado en **Cloudflare Workers** y base de datos serverless **Cloudflare D1 (SQLite)**.
+Los clientes (teclado Android LOLA, agente de sincronización de escritorio, paneles web y agentes de IA) sincronizan por **HASH canónico (SHA-256)**: consultan el estado y solo descargan el catálogo completo si el hash cambió.
+
+## 2. Direcciones Base (Base URL)
+- Producción (HTTPS): \`${API_BASE}\`
+- Desarrollo / Local: \`http://localhost:8787\`
+- Emulador Android: \`http://10.0.2.2:8787\`
+
+## 3. Autenticación y Autorización
+- **Endpoints Públicos (Lectura):**
+  - \`GET /api/v1/version\`
+  - \`GET /api/v1/sync\` (v1 legacy aditivo)
+  - \`GET /api/v1/sync/v2\` (v2 moderno)
+  - \`GET /api/v1/sync-config\`
+  - \`GET /api/v1/parser-config\`
+  - \`GET /api/v1/mapa-catalogo\`
+- **Operaciones Administrativas (Requieren Token):**
+  - Encabezado HTTP obligatorio: \`Authorization: Bearer <TOKEN>\`
+  - Para obtener el token:
+    \`\`\`http
+    POST /api/v1/auth/login
+    Content-Type: application/json; charset=utf-8
+
+    {
+      "username": "<USUARIO>",
+      "password": "<PASSWORD>"
+    }
+    \`\`\`
+    Respuesta exitosa:
+    \`\`\`json
+    {
+      "ok": true,
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+      "expiresIn": 86400
+    }
+    \`\`\`
+    El token es un JWT válido por 24 horas.
+
+## 4. Protocolo de Sincronización Recomendado (Offline-First)
+1. **Chequeo de Versión:**
+   Realizar \`GET /api/v1/version\`.
+   Respuesta:
+   \`\`\`json
+   {
+     "revision": 42,
+     "hash": "a1b2c3d4e5f6...",
+     "updated_at": "2026-10-23 18:30:00"
+   }
+   \`\`\`
+2. **Comparación Local:**
+   Comparar \`hash\` con el hash almacenado localmente en caché o base de datos.
+   Si son iguales: **el catálogo está al día**. No realizar más peticiones (0 consumo de red).
+3. **Descarga de Catálogo:**
+   Si el hash difiere: llamar a \`GET /api/v1/sync/v2\` y actualizar la base de datos local.
+
+## 5. Endpoints de Consulta de Catálogo
+
+### GET \`/api/v1/sync/v2\`
+Devuelve el catálogo en el contrato moderno.
+**Parámetros de consulta opcionales:**
+- \`?since=YYYY-MM-DD HH:MM:SS\` (o ISO UTC): Trae solo artículos con \`updated_at >= since\`.
+- \`?page=1&limit=100\`: Paginación determinística ordenada por \`codigo_unico\`.
+- \`?fields=codigo_unico,descripcion,precios,stock\`: Proyección de campos específicos.
+
+**Estructura del producto (modo predeterminado):**
+\`\`\`json
+{
+  "codigo_unico": "KAUR8146",
+  "descripcion": "KAURY 8146 C. SOFT C/ARO",
+  "precios": [15500, 14200, 11050, 10050],
+  "costo_neto": 5500.5,
+  "costo_iva": 6655.6,
+  "categoria": "CORSETERIA",
+  "fabrica": "KAURY",
+  "codigo": "8146",
+  "oferta": false,
+  "stock": 10,
+  "updated_at": "2026-10-23 18:30:00"
+}
+\`\`\`
+
+### GET \`/api/v1/sync\` (Contrato v1 Congelado)
+Contrato aditivo inmutable para compatibilidad retroactiva:
+\`\`\`json
+{
+  "revision": 42,
+  "hash": "a1b2c3d4...",
+  "products": [
+    {
+      "codigo_unico": "KAUR8146",
+      "nombre": "KAURY 8146 C. SOFT C/ARO",
+      "precios": [15500, 14200, 11050, 10050],
+      "fabrica": "KAURY",
+      "codigo": "8146",
+      "descripcion": "KAURY 8146 C. SOFT C/ARO",
+      "costo_neto": 5500.5,
+      "oferta": false,
+      "stock": 10
+    }
+  ]
+}
+\`\`\`
+
+## 6. Endpoints de Escritura y Administración
+
+### POST \`/api/v1/admin/products\`
+Actualización o reemplazo de productos (requiere \`Authorization: Bearer <TOKEN>\`).
+- **Upsert / Delta (modificar/agregar productos sin borrar el resto):**
+  \`\`\`json
+  {
+    "products": [
+      {
+        "codigo_unico": "KAUR8146",
+        "descripcion": "KAURY 8146 C. SOFT C/ARO",
+        "precios": [16000, 14500, 11500, 10500],
+        "costo_neto": 5700,
+        "costo_iva": 6897,
+        "categoria": "CORSETERIA",
+        "fabrica": "KAURY",
+        "codigo": "8146",
+        "oferta": false,
+        "stock": 15
+      }
+    ],
+    "deleted": ["CODIGO_A_BORRAR"],
+    "replace": false
+  }
+  \`\`\`
+- **Reemplazo Total (rotación atómica de backup):**
+  \`\`\`json
+  {
+    "products": [...],
+    "replace": true
+  }
+  \`\`\`
+  Al reemplazar, la base anterior pasa a backup rotativo (\`products_bak\` o \`products_bak2\`).
+
+### DELETE \`/api/v1/admin/products/:codigo_unico\`
+Elimina un artículo individual del catálogo activo y sube la revisión.
+
+### POST \`/api/v1/admin/rollback\`
+Restaura el catálogo al estado de \`bak\` o \`bak2\` revirtiendo el reemplazo anterior:
+\`\`\`json
+{ "backup": "bak" }
+\`\`\`
+
+## 7. Modelo de Precios y Reglas de Negocio
+- \`precios\`: Array de 4 enteros \`[Lista 1, Lista 2, Lista 3, Lista 4]\`.
+- \`Lista 4\`: Precio base de referencia de catálogo.
+- \`oferta\`: Si es \`true\`, todas las listas se igualan al precio de oferta.
+- Fórmulas de cálculo de costo:
+  - \`costo_iva = Lista 4 / (1 + factor_inversa_l4 / 100)\`
+  - \`costo_neto = costo_iva / (1 + IVA / 100)\`
+
+## 8. Observaciones Técnicas Clave para Agentes
+- **CORS Activo:** \`Access-Control-Allow-Origin: *\` habilitado en todas las rutas.
+- **Cache-Control:** Respuestas con \`Cache-Control: no-store\` para evitar datos cacheados obsoletos.
+- **Formato de Fechas:** Timestamps UTC \`YYYY-MM-DD HH:MM:SS\`.
+- **Content-Type:** Enviar siempre \`Content-Type: application/json; charset=utf-8\` en peticiones POST y DELETE.
+- **Seguridad:** En producción usar siempre \`https://\`. HTTP plano solo se permite en desarrollo local o emulador.
+`;
+}
+
+function abrirGuiaConfig() {
+  const modal = $('guiaModal');
+  $('codigoGuiaMd').textContent = getGuiaMarkdown();
+  setGuiaTab('doc');
+  if (typeof modal.showModal === 'function') {
+    modal.showModal();
+  } else {
+    modal.hidden = false;
+  }
+}
+
+function cerrarGuiaConfig() {
+  const modal = $('guiaModal');
+  if (typeof modal.close === 'function') {
+    modal.close();
+  } else {
+    modal.hidden = true;
+  }
+}
+
+function setGuiaTab(tab) {
+  const esDoc = tab === 'doc';
+  $('panelGuiaDoc').hidden = !esDoc;
+  $('panelGuiaMd').hidden = esDoc;
+  $('btnTabGuiaDoc').className = 'btn ' + (esDoc ? 'secondary active' : 'ghost');
+  $('btnTabGuiaMd').className = 'btn ' + (!esDoc ? 'secondary active' : 'ghost');
+}
+
+async function copiarGuiaMarkdown(btnEl) {
+  const md = getGuiaMarkdown();
+  try {
+    await navigator.clipboard.writeText(md);
+    if (btnEl) {
+      const originalText = btnEl.textContent;
+      btnEl.textContent = '✅ Copiado';
+      setTimeout(() => { btnEl.textContent = originalText; }, 2000);
+    }
+    toast('Guía Markdown para agentes copiada al portapapeles', 'ok');
+  } catch (err) {
+    toast('No se pudo copiar al portapapeles: ' + err.message, 'err');
+  }
+}
+
+$('btnGuiaConfig').addEventListener('click', abrirGuiaConfig);
+$('btnCerrarGuia').addEventListener('click', cerrarGuiaConfig);
+$('btnCerrarGuiaFoot').addEventListener('click', cerrarGuiaConfig);
+
+$('btnTabGuiaDoc').addEventListener('click', () => setGuiaTab('doc'));
+$('btnTabGuiaMd').addEventListener('click', () => setGuiaTab('md'));
+
+$('btnCopiarGuia').addEventListener('click', (e) => copiarGuiaMarkdown(e.currentTarget));
+$('btnCopiarGuiaFoot').addEventListener('click', (e) => copiarGuiaMarkdown(e.currentTarget));
+
+// Light dismiss al clickear el backdrop del <dialog> de la guía
+$('guiaModal').addEventListener('click', (e) => {
+  const rect = $('guiaModal').getBoundingClientRect();
+  const clickEnDialog = (
+    e.clientX >= rect.left && e.clientX <= rect.right &&
+    e.clientY >= rect.top && e.clientY <= rect.bottom
+  );
+  if (e.target === $('guiaModal') && !clickEnDialog) {
+    cerrarGuiaConfig();
+  }
+});

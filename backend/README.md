@@ -7,6 +7,47 @@ Sync **offline-first** del catálogo de LOLA, por **HASH + catálogo completo**.
 - **Clientes** = teclado Android, editor de fotos (sde11), extensión, futuras apps:
   todos hablan el mismo contrato `version → sync`.
 
+## 🗺️ Mapa de Dependencias del Ecosistema
+
+```mermaid
+flowchart TD
+    subgraph Fuentes["Fuentes de Datos"]
+        SyncAgent["🤖 sync-agent (Windows)<br/>Sube deltas desde AdmGlobal MDB"]
+        PagesWeb["🌐 pages (Cloudflare Pages)<br/>Admin web: sube Excel y edita catálogo"]
+        CLI["💻 CLI (scripts/import-catalogo.ts)<br/>Carga manual por terminal"]
+    end
+
+    subgraph Core["⚡ Núcleo Backend (Cloudflare Worker)"]
+        Worker["LOLA Worker API (TypeScript)<br/>Auth JWT, Delta Engine, Hashing SHA-256"]
+        D1[("🗄️ Cloudflare D1 (lola-db)<br/>SQLite serverless: products, backups, metadata")]
+        Worker <--> D1
+    end
+
+    subgraph Clientes["Consumidores del Catálogo"]
+        Android["📱 Teclado Android (Offline-first)<br/>Consulta /version y baja /sync"]
+        Sde11["📸 Editor de Fotos (sde11)<br/>Consulta /mapa-catalogo"]
+        Futuros["🚀 Extensiones y Apps futuras"]
+    end
+
+    Fuentes -->|POST /api/v1/admin/* (JWT)| Worker
+    Worker -->|GET /api/v1/version & /sync| Clientes
+```
+
+### ¿De quién depende este `backend`?
+1. **Cloudflare Workers (Runtime V8):** Ejecuta la API sin servidores físicos propios.
+2. **Cloudflare D1 (`lola-db`):** Motor de persistencia relacional SQLite. No requiere conexión a base de datos externa.
+3. **Secrets en Cloudflare (`wrangler secret put`):**
+   * `ADMIN_USER`: Usuario administrador.
+   * `ADMIN_PASSWORD`: Contraseña administrativa (hasheada con PBKDF2).
+   * `JWT_SECRET`: Llave criptográfica para emitir y validar tokens de sesión.
+4. **Wrangler CLI:** Para compilar, testear y desplegar migraciones SQL.
+
+### ¿Quiénes dependen de este `backend`?
+* **[`sync-agent/`](file:///c:/Users/elladecide2/Documents/GitHub/elladecide-sde9/sync-agent/README.md):** Lo necesita para empujar altas/bajas/modificaciones detectadas en la PC local del comercio.
+* **[`pages/`](file:///c:/Users/elladecide2/Documents/GitHub/elladecide-sde9/pages/README.md):** Panel administrativo web que consulta el inventario y envía catálogos generados.
+* **`android/`:** App móvil con teclado que descarga el catálogo completo para funcionar sin internet en la calle.
+* **`sde11`:** Editor de fotos para relacionar imágenes JPG por `codigo_unico`.
+
 ## Estructura
 
 ```

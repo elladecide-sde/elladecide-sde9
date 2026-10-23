@@ -129,8 +129,13 @@
 
     <!-- ══ CONFIGURACIÓN ═══════════════════════════════════════════════════ -->
     <section class="view" id="view-config" hidden>
-      <h2 class="block-title">⚙️ Configuración</h2>
-      <p class="muted inv-sub">Todo lo ajustable del panel: precios, formato de sync y tu cuenta.</p>
+      <div class="inv-head">
+        <div>
+          <h2 class="block-title">⚙️ Configuración</h2>
+          <p class="muted inv-sub">Todo lo ajustable del panel: precios, formato de sync y tu cuenta.</p>
+        </div>
+        <button id="btnGuiaConfig" class="btn secondary" type="button">📖 Guía de configuración</button>
+      </div>
 
       <section class="block">
         <h3 class="block-title">💲 Precios</h3>
@@ -495,6 +500,152 @@
       <div class="confirm-actions">
         <button id="confirmBtnCancel" class="btn ghost" type="button">Cancelar</button>
         <button id="confirmBtnOk" class="btn danger" type="button">Confirmar</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Modal Dialog: Guía de configuración y API -->
+  <dialog class="modal-dialog modal-lg" id="guiaModal">
+    <div class="modal-container">
+      <div class="modal-head">
+        <div class="modal-title-box">
+          <h3>📖 Guía de Configuración y Conexión a la API</h3>
+          <p class="muted" style="font-size: 13px; margin: 0;">Instrucciones para conectar apps, agentes de IA y servicios externos al backend de LOLA.</p>
+        </div>
+        <button class="btn ghost btn-close" id="btnCerrarGuia" type="button" title="Cerrar guía (Esc)">✕</button>
+      </div>
+
+      <!-- Barra de navegación y herramientas del modal -->
+      <div class="guia-toolbar">
+        <div class="guia-tabs">
+          <button type="button" class="btn secondary active" id="btnTabGuiaDoc">📖 Documentación</button>
+          <button type="button" class="btn ghost" id="btnTabGuiaMd">🤖 MD para agentes</button>
+        </div>
+        <div class="guia-actions-bar">
+          <button type="button" class="btn primary btn-sm" id="btnCopiarGuia">📋 Copiar</button>
+        </div>
+      </div>
+
+      <!-- Vista 1: Documentación estructurada visual -->
+      <div id="panelGuiaDoc" class="guia-panel">
+        <div class="guia-block">
+          <div class="guia-block-title">🌐 Direcciones Base (Base URL)</div>
+          <p class="guia-text">El backend de LOLA corre en Cloudflare Workers con base de datos SQLite serverless (Cloudflare D1):</p>
+          <ul class="guia-list">
+            <li><strong>Producción (HTTPS):</strong> <code>https://lola-backend.elladecide.workers.dev</code></li>
+            <li><strong>Desarrollo Local:</strong> <code>http://localhost:8787</code></li>
+            <li><strong>Emulador Android:</strong> <code>http://10.0.2.2:8787</code> (mapeo directo a localhost del host)</li>
+          </ul>
+        </div>
+
+        <div class="guia-block">
+          <div class="guia-block-title">🔑 Autenticación y Permisos</div>
+          <p class="guia-text">El modelo de acceso separa lecturas públicas de operaciones administrativas:</p>
+          <ul class="guia-list">
+            <li><strong>Lectura pública (sin token):</strong> <code>/api/v1/version</code>, <code>/api/v1/sync</code>, <code>/api/v1/sync/v2</code>, <code>/api/v1/sync-config</code>, <code>/api/v1/parser-config</code>, <code>/api/v1/mapa-catalogo</code>.</li>
+            <li><strong>Escritura / Admin (requiere Bearer Token):</strong> <code>POST /api/v1/admin/products</code>, <code>POST /api/v1/admin/rollback</code>, <code>DELETE /api/v1/admin/products/:codigo</code>, etc.</li>
+            <li><strong>Obtención del token:</strong> Realizá un <code>POST /api/v1/auth/login</code> con JSON <code>{"username": "...", "password": "..."}</code>. La respuesta entrega un JWT con validez de 24 horas.</li>
+          </ul>
+        </div>
+
+        <div class="guia-block">
+          <div class="guia-block-title">🔄 Protocolo de Sincronización (Offline-First por Hash)</div>
+          <p class="guia-text">Para máxima eficiencia de red y rendimiento en dispositivos móviles y agentes:</p>
+          <ol class="guia-list">
+            <li><strong>Consultar versión:</strong> Llamar periódicamente o al abrir la app a <code>GET /api/v1/version</code>. Responde <code>{ "revision": N, "hash": "..." }</code>.</li>
+            <li><strong>Comparar hash local:</strong> Si el <code>hash</code> recibido es idéntico al guardado en la base local, el catálogo está 100% al día. No se hace ninguna petición más.</li>
+            <li><strong>Descarga completa o delta:</strong> Si el hash cambió, llamar a <code>GET /api/v1/sync/v2</code> para refrescar la base de datos local.</li>
+          </ol>
+        </div>
+
+        <div class="guia-block">
+          <div class="guia-block-title">📡 Endpoints Principales y Parámetros</div>
+          <table class="guia-table">
+            <thead>
+              <tr>
+                <th style="width: 25%">Endpoint</th>
+                <th style="width: 15%">Método / Auth</th>
+                <th>Descripción y Parámetros</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>/api/v1/version</code></td>
+                <td><span class="pill ok" style="font-size:11px">GET · Libre</span></td>
+                <td>Devuelve <code>{ revision, hash, updated_at }</code> para chequeo instantáneo.</td>
+              </tr>
+              <tr>
+                <td><code>/api/v1/sync/v2</code></td>
+                <td><span class="pill ok" style="font-size:11px">GET · Libre</span></td>
+                <td>
+                  Contrato moderno completo. Parámetros opcionales:<br>
+                  • <code>?since=YYYY-MM-DD HH:MM:SS</code> (cambios desde fecha UTC)<br>
+                  • <code>?page=N&amp;limit=M</code> (paginación ordenada por código)<br>
+                  • <code>?fields=col1,col2</code> (proyección de campos específicos)
+                </td>
+              </tr>
+              <tr>
+                <td><code>/api/v1/sync</code></td>
+                <td><span class="pill ok" style="font-size:11px">GET · Libre</span></td>
+                <td>Contrato v1 aditivo e inmutable para clientes clásicos de teclado.</td>
+              </tr>
+              <tr>
+                <td><code>/api/v1/admin/products</code></td>
+                <td><span class="pill" style="font-size:11px; color:#ffb74d">POST · Bearer</span></td>
+                <td>
+                  Upsert parcial (<code>replace: false</code>) o reemplazo total atómico con rotación de backups (<code>replace: true</code>).
+                </td>
+              </tr>
+              <tr>
+                <td><code>/api/v1/admin/rollback</code></td>
+                <td><span class="pill" style="font-size:11px; color:#ffb74d">POST · Bearer</span></td>
+                <td>Restaura inmediatamente el catálogo anterior desde <code>bak</code> o <code>bak2</code>.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="guia-block">
+          <div class="guia-block-title">🏷️ Estructura del Producto y Listas</div>
+          <p class="guia-text">Cada artículo del catálogo contiene:</p>
+          <ul class="guia-list">
+            <li><code>codigo_unico</code>: Identificador primario determinístico (ej: <code>"KAUR8146"</code>).</li>
+            <li><code>descripcion</code>: Nombre comercial completo del artículo.</li>
+            <li><code>precios</code>: Array de 4 enteros <code>[Lista 1, Lista 2, Lista 3, Lista 4]</code>. La <strong>Lista 4</strong> es el precio base de catálogo.</li>
+            <li><code>costo_neto</code> y <code>costo_iva</code>: Valores de costo sin/con IVA.</li>
+            <li><code>oferta</code>: Booleano. Si es <code>true</code>, las 4 listas vienen igualadas al valor de liquidación.</li>
+            <li><code>fabrica</code>, <code>codigo</code> (modelo de fábrica), <code>categoria</code> y <code>stock</code>.</li>
+          </ul>
+        </div>
+
+        <div class="guia-block">
+          <div class="guia-block-title">⚠️ Observaciones y Detalles Técnicos</div>
+          <ul class="guia-list">
+            <li><strong>CORS Universal:</strong> Encabezado <code>Access-Control-Allow-Origin: *</code> activo en todas las rutas para consumo directo desde navegadores y paneles web.</li>
+            <li><strong>Sin caché de navegador:</strong> Todas las respuestas dinámicas devuelven <code>Cache-Control: no-store</code> para asegurar consistencia inmediata.</li>
+            <li><strong>Horarios en UTC:</strong> Todos los campos temporales (<code>updated_at</code>, <code>serverTime</code>) se generan y comparan en hora UTC (formato <code>YYYY-MM-DD HH:MM:SS</code>).</li>
+            <li><strong>Rotación Segura:</strong> Al hacer reemplazo total, D1 rota automáticamente la versión anterior a la tabla de backup más vieja (<code>products_bak</code> o <code>products_bak2</code>), garantizando reversión con 1 click.</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Vista 2: Markdown crudo para agentes de IA con copybox -->
+      <div id="panelGuiaMd" class="guia-panel" hidden>
+        <div class="guia-block" style="padding: 12px 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span class="muted" style="font-size: 12px;">Especificación Markdown optimizada para prompts, LLMs y Agentes de IA:</span>
+            <span class="code-badge">Markdown / LLM Ready</span>
+          </div>
+        </div>
+        <pre class="guia-pre guia-pre-md"><code id="codigoGuiaMd">Cargando especificación…</code></pre>
+      </div>
+
+      <div class="modal-foot">
+        <span id="guiaStatus" class="status"></span>
+        <div class="modal-actions">
+          <button id="btnCerrarGuiaFoot" class="btn ghost" type="button">Cerrar</button>
+          <button id="btnCopiarGuiaFoot" class="btn primary" type="button">📋 Copiar</button>
+        </div>
       </div>
     </div>
   </dialog>

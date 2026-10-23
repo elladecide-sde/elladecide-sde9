@@ -5,6 +5,39 @@ lee el Excel (SheetJS), calcula las 4 listas y genera `codigo_unico` en el
 navegador (`codigoUnico.js`, port EXACTO del backend). El Worker es el mensajero
 que **reemplaza** el catálogo con backup rotativo.
 
+## 🗺️ Mapa de Dependencias del Ecosistema
+
+```mermaid
+flowchart LR
+    Admin["👤 Operador / Administrador"] -->|Usa la UI web| Pages["🌐 pages (Cloudflare Pages SPA)"]
+    Pages -->|Lee y parsea en cliente| SheetJS["📊 SheetJS (xlsx.full.min.js)"]
+    Pages -->|Genera llaves idénticas| CodigoUnico["🔑 codigoUnico.js"]
+    Pages -->|Detecta fábrica/código| Parser["🏷️ articleParser.js"]
+
+    Pages -->|REST API + JWT| Backend["⚡ LOLA Backend (Worker)"]
+    Backend <--> D1[("🗄️ Cloudflare D1 (lola-db)")]
+
+    SyncAgent["🤖 sync-agent (Windows)"] -.->|Canal paralelo de actualización| Backend
+```
+
+### ¿De quién depende `pages`?
+1. **[`backend/`](file:///c:/Users/elladecide2/Documents/GitHub/elladecide-sde9/backend/README.md):** Es su único servicio backend. `pages` no tiene base de datos propia; consume endpoints REST protegidos por JWT:
+   * `POST /api/v1/auth/login`: Autenticación.
+   * `GET /api/v1/sync/v2`: Lectura del inventario para la tabla y buscador.
+   * `POST /api/v1/admin/products`: Guardado de ediciones y subida masiva de catálogo (`replace: true`).
+   * `POST /api/v1/admin/rollback`: Restauración de emergencia a la versión previa.
+2. **Bibliotecas locales sin dependencias externas:**
+   * `xlsx.full.min.js`: Para leer y procesar hojas de cálculo Excel directamente en la memoria del navegador.
+   * `codigoUnico.js`: Port 1:1 de la función TypeScript del backend para garantizar unicidad y estabilidad de claves primarias.
+   * `articleParser.js`: Módulo ESM para inferir fábrica, código y ofertas desde la descripción del producto.
+3. **Cloudflare Pages:** Plataforma de hosting serverless estático (HTML/CSS/JS plano sin bundler complejo).
+
+### ¿Quiénes dependen de `pages`?
+* **Los dueños y operadores del comercio:** Es el único panel visual con buscador fuzzy, edición rápida de precios y visor de inventario.
+* **El catálogo en la nube:** Cuando el operador edita un producto o sube un Excel corregido desde `pages`, se actualiza la versión en D1 y todos los dispositivos (como el teclado Android) se actualizan automáticamente.
+
+---
+
 ## Secciones
 
 El panel es una SPA con 4 tabs (visibles solo con sesión iniciada):

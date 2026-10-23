@@ -104,6 +104,7 @@ interface Meta {
   revision: number;
   hash: string;
   newest: 'bak' | 'bak2';
+  updated_at?: string;
 }
 
 interface RowProducto {
@@ -125,8 +126,8 @@ interface RowProducto {
 
 async function getMetadata(db: D1Database): Promise<Meta> {
   const row = await db
-    .prepare('SELECT revision_number, catalog_hash, backup_state FROM metadata WHERE key = \'catalog\'')
-    .first<{ revision_number: number; catalog_hash: string; backup_state: string | null }>();
+    .prepare('SELECT revision_number, catalog_hash, backup_state, updated_at FROM metadata WHERE key = \'catalog\'')
+    .first<{ revision_number: number; catalog_hash: string; backup_state: string | null; updated_at?: string }>();
   let newest: 'bak' | 'bak2' = 'bak2';
   try {
     const st = JSON.parse(row?.backup_state ?? '{}');
@@ -134,7 +135,12 @@ async function getMetadata(db: D1Database): Promise<Meta> {
   } catch {
     /* estado inválido → default */
   }
-  return { revision: row?.revision_number ?? 0, hash: row?.catalog_hash ?? '', newest };
+  return {
+    revision: row?.revision_number ?? 0,
+    hash: row?.catalog_hash ?? '',
+    newest,
+    updated_at: row?.updated_at ?? '',
+  };
 }
 
 const metaUpdate = (db: D1Database, revision: number, hash: string, backup_state: string) =>
@@ -386,7 +392,7 @@ async function replaceCatalog(db: D1Database, products: Product[]) {
     metaUpdate(db, newRevision, hash, nuevoState),
   ];
   await runBatch(db, batch);
-  return { revision: newRevision, hash, backup: target };
+  return { revision: newRevision, hash, backup: target, updated_at: new Date().toISOString().replace('T', ' ').slice(0, 19) };
 }
 
 /** Upsert parcial y/o bajas atómicas (sin wipe ni backup): edición de 1 o N productos + bajas. */
@@ -451,7 +457,7 @@ async function upsertProducts(db: D1Database, products: Product[], deletedCodes:
     );
   }
   await runBatch(db, batch);
-  return { revision: newRevision, hash, upserted: normalizedForUpsert.length, deleted: deletedCodes.length };
+  return { revision: newRevision, hash, upserted: normalizedForUpsert.length, deleted: deletedCodes.length, updated_at: new Date().toISOString().replace('T', ' ').slice(0, 19) };
 }
 
 async function adminDeleteProduct(db: D1Database, codigoUnico: string) {
@@ -566,7 +572,7 @@ async function handleSync(db: D1Database, params: URLSearchParams) {
     stock: Number(r.stock) || 0,
   }, q.query.fields));
 
-  return json(conExtras({ revision: meta.revision, hash: meta.hash, products }, q.query, total, serverTime));
+  return json(conExtras({ revision: meta.revision, hash: meta.hash, updated_at: meta.updated_at, products }, q.query, total, serverTime));
 }
 
 /**
@@ -587,7 +593,7 @@ async function handleSyncV2(db: D1Database, params: URLSearchParams) {
     // Únicamente { descripcion, costo }. Sin listas, sin costo+IVA,
     // sin categoría, sin fábrica.
     const products = rows.map((r) => pickFields({ descripcion: r.descripcion, costo: r.costo_neto }, q.query.fields));
-    return json(conExtras({ revision: meta.revision, hash: meta.hash, format: modo, products }, q.query, total, serverTime));
+    return json(conExtras({ revision: meta.revision, hash: meta.hash, updated_at: meta.updated_at, format: modo, products }, q.query, total, serverTime));
   }
 
   const products = rows.map((r) => pickFields({
@@ -603,7 +609,7 @@ async function handleSyncV2(db: D1Database, params: URLSearchParams) {
     costo_iva: r.costo_iva,
     updated_at: r.updated_at,
   }, q.query.fields));
-  return json(conExtras({ revision: meta.revision, hash: meta.hash, format: modo, products }, q.query, total, serverTime));
+  return json(conExtras({ revision: meta.revision, hash: meta.hash, updated_at: meta.updated_at, format: modo, products }, q.query, total, serverTime));
 }
 
 /** GET /api/v1/sync-config → { modo }. Lectura libre: es solo un formato. */

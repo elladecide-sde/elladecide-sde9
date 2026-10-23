@@ -33,7 +33,7 @@ class SnapshotManager:
         latest_dir: str,
         mdb_password: str = "toifel",
         backups_dir: str = "",
-        max_backups: int = 15,
+        max_backups: int = 3,
     ):
         self.latest_dir = latest_dir
         self.backups_dir = backups_dir
@@ -41,6 +41,14 @@ class SnapshotManager:
         self.snapshot_name = "AdmGlobal_snapshot.mdb"
         self.snapshot_path = os.path.join(latest_dir, self.snapshot_name)
         self.mdb_password = mdb_password
+
+    def cleanup_snapshot(self) -> None:
+        """Elimina el archivo de consumo temporal para liberar espacio en reposo."""
+        try:
+            if os.path.exists(self.snapshot_path):
+                os.remove(self.snapshot_path)
+        except OSError as e:
+            logging.debug(f"No se pudo limpiar snapshot temporal: {e}")
 
     def create_snapshot(self, source_mdb: str, max_retries: int = 3) -> str:
         if not os.path.exists(source_mdb):
@@ -75,14 +83,23 @@ class SnapshotManager:
         raise RuntimeError(f"No se pudo crear snapshot íntegro tras {max_retries} intentos: {last_err}")
 
     def rotate_backup(self) -> None:
-        """Guarda copia histórica en backups/ cuando hubo cambios reales y rota las más viejas."""
+        """Mueve la copia de consumo a backups/ cuando hubo cambios reales y rota las más viejas."""
         if not self.backups_dir or not os.path.exists(self.snapshot_path):
+            return
+        if self.max_backups <= 0:
+            # Si backups está apagado, limpiamos el snapshot temporal para dejar 0 bytes en reposo
+            self.cleanup_snapshot()
             return
         try:
             os.makedirs(self.backups_dir, exist_ok=True)
             ts = time.strftime("%Y%m%d_%H%M%S")
             dst = os.path.join(self.backups_dir, f"AdmGlobal_{ts}.mdb")
-            shutil.copy2(self.snapshot_path, dst)
+            counter = 1
+            while os.path.exists(dst):
+                dst = os.path.join(self.backups_dir, f"AdmGlobal_{ts}_{counter}.mdb")
+                counter += 1
+            # Mover el archivo en vez de copiar: ahorra 860 MB de duplicación y es instantáneo (rename NTFS)
+            shutil.move(self.snapshot_path, dst)
 
             files = sorted(
                 [

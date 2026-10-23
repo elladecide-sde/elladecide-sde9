@@ -49,8 +49,33 @@ from startup_manager import (
 
 INTERVAL_OPTIONS = [0, 5, 10, 15, 30, 45, 60, 120, 240]
 DEFAULT_INTERVAL = 60
+BACKUP_OPTIONS = [0, 1, 3, 5, 10, 15]
+DEFAULT_MAX_BACKUPS = 3
 SYNC_MODES = ("automatica", "manual")
 WINDOW_TITLE = "LOLA · Agente Sincronizador AdmGlobal → Cloudflare D1"
+
+
+def backups_to_label(count: int) -> str:
+    """Convierte cantidad de backups a texto amigable para el selector."""
+    if count <= 0:
+        return "0 (OFF - Sin backups)"
+    if count == 1:
+        return "1 copia (~860 MB)"
+    if count == 3:
+        return "3 copias (Predeterminado ~2.5 GB)"
+    return f"{count} copias (~{round(count * 0.85, 1)} GB)"
+
+
+def label_to_backups(label: str) -> int:
+    """Parsea el texto del selector a cantidad de backups (OFF -> 0)."""
+    lbl = (label or "").strip().upper()
+    if lbl.startswith("0") or "OFF" in lbl:
+        return 0
+    m = re.match(r"^(\d+)", lbl)
+    if m:
+        val = int(m.group(1))
+        return val if val in BACKUP_OPTIONS else DEFAULT_MAX_BACKUPS
+    return DEFAULT_MAX_BACKUPS
 
 
 def interval_to_label(mins: int) -> str:
@@ -233,6 +258,7 @@ class AgentConfig:
         self.api_password = ""
         self.sync_on_startup = True  # ON predeterminado
         self.sync_interval_minutes = DEFAULT_INTERVAL  # 60 min predeterminado
+        self.max_backups = DEFAULT_MAX_BACKUPS  # 3 backups históricos predeterminado
         self.load()
 
     @property
@@ -275,6 +301,8 @@ class AgentConfig:
             self.sync_on_startup = bool(data.get("syncOnStartup", True))
             interval = int(data.get("syncIntervalMinutes", DEFAULT_INTERVAL))
             self.sync_interval_minutes = interval if interval in INTERVAL_OPTIONS else DEFAULT_INTERVAL
+            mb = int(data.get("maxBackups", DEFAULT_MAX_BACKUPS))
+            self.max_backups = mb if mb in BACKUP_OPTIONS else DEFAULT_MAX_BACKUPS
         except Exception as e:
             logging.warning(f"Error leyendo settings.json, usando valores por defecto: {e}")
 
@@ -294,6 +322,7 @@ class AgentConfig:
             "apiPassword": self.api_password,
             "syncOnStartup": self.sync_on_startup,
             "syncIntervalMinutes": self.sync_interval_minutes,
+            "maxBackups": self.max_backups,
         }
         with open(self.settings_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
@@ -389,6 +418,7 @@ def execute_sync_mdb(config: AgentConfig, force_full: bool = False) -> Dict[str,
             config.consumo_dir,
             config.mdb_password,
             backups_dir=config.backups_dir,
+            max_backups=config.max_backups,
         )
         snapshot_path = snap_mgr.create_snapshot(source_mdb)
 
@@ -397,6 +427,8 @@ def execute_sync_mdb(config: AgentConfig, force_full: bool = False) -> Dict[str,
         res = _process_and_upload(config, extracted, force_full=force_full, source_label="MDB")
         if res.get("mode") != "skip":
             snap_mgr.rotate_backup()
+        elif config.max_backups <= 0:
+            snap_mgr.cleanup_snapshot()
         return res
     finally:
         file_lock.release()
@@ -785,6 +817,28 @@ class SyncAppWindow(tk.Tk):
         self.interval_combo.pack(side="right")
         self.interval_combo.bind("<<ComboboxSelected>>", self._on_interval_changed)
 
+        row_backups = tk.Frame(cfg_card, bg="#0f172a")
+        row_backups.pack(fill="x", pady=3)
+        tk.Label(
+            row_backups,
+            text="Copias de seguridad históricas (Backups):",
+            font=("Segoe UI", 9),
+            fg="#f1f5f9",
+            bg="#0f172a",
+        ).pack(side="left")
+
+        self.backups_var = tk.StringVar(value=backups_to_label(self.config_obj.max_backups))
+        self.backups_combo = ttk.Combobox(
+            row_backups,
+            textvariable=self.backups_var,
+            values=[backups_to_label(c) for c in BACKUP_OPTIONS],
+            state="readonly",
+            width=28,
+            font=("Segoe UI", 9),
+        )
+        self.backups_combo.pack(side="right")
+        self.backups_combo.bind("<<ComboboxSelected>>", self._on_backups_changed)
+
         # 3. Origen de Datos (Archivo MDB + Clave MDB / o Archivo Excel)
         self.source_card = tk.LabelFrame(
             self.scrollable_frame,
@@ -1122,6 +1176,8 @@ class SyncAppWindow(tk.Tk):
         self.config_obj.api_url = self.api_url_entry.get().strip()
         self.config_obj.api_user = self.api_user_entry.get().strip() or "admin"
         self.config_obj.api_password = self.api_pwd_entry.get().strip()
+        if hasattr(self, "backups_var"):
+            self.config_obj.max_backups = label_to_backups(self.backups_var.get())
         self.config_obj.save()
 
     def _on_path_changed(self) -> None:
@@ -1234,6 +1290,24 @@ class SyncAppWindow(tk.Tk):
                 logging.info(f"Intervalo de actualización ajustado a {mins} minutos.")
                 self.status_lbl.configure(
                     text=f"✓ Intervalo actualizado: cada {mins} min (y al iniciar Windows)",
+                    fg="#4ade80",
+                )
+
+    def _on_backups_changed(self, _event: Any = None) -> None:
+        count = label_to_backups(self.backups_var.get())
+        if count in BACKUP_OPTIONS:
+            self.config_obj.max_backups = count
+            self._sync_fields_to_config()
+            if count == 0:
+                logging.info("Copias de seguridad desactivadas (OFF).")
+                self.status_lbl.configure(
+                    text="ℹ Backups desactivados: no se guardarán copias históricas en disco",
+                    fg="#38bdf8",
+                )
+            else:
+                logging.info(f"Cantidad máxima de backups ajustada a {count}.")
+                self.status_lbl.configure(
+                    text=f"✓ Backups actualizados: se conservarán hasta {count} copias históricas",
                     fg="#4ade80",
                 )
 
