@@ -174,3 +174,28 @@ ON CONFLICT(key) DO NOTHING;
 INSERT INTO metadata (key)
 VALUES ('catalog')
 ON CONFLICT(key) DO NOTHING;
+
+-- ============================================================================
+-- Módulo comprasED: Clientes interesados y Compras bajo demanda
+-- Totalmente aislado del catálogo de productos y metadata.
+-- ============================================================================
+
+-- ── clientes_interesados: DNIs de clientes registrados por Ella ─────────────
+CREATE TABLE IF NOT EXISTS clientes_interesados (
+  dni            TEXT PRIMARY KEY,
+  requested_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  last_synced_at TEXT
+);
+
+-- ── compras_cliente: Historial de compras asociadas al DNI del cliente ──────
+CREATE TABLE IF NOT EXISTS compras_cliente (
+  id_documento   INTEGER PRIMARY KEY,
+  dni            TEXT NOT NULL,
+  fecha          TEXT NOT NULL,
+  tipo_doc       TEXT NOT NULL DEFAULT '',
+  total          REAL NOT NULL DEFAULT 0,
+  items_json     TEXT NOT NULL DEFAULT '[]',
+  updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_compras_dni ON compras_cliente(dni);
+

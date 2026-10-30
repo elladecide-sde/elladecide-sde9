@@ -39,6 +39,7 @@ from d1_uploader import D1Uploader
 from delta_engine import DeltaEngine
 from excel_extractor import ExcelExtractor
 from mdb_extractor import MDBExtractor
+from compras_extractor import ComprasExtractor
 from snapshot_manager import SnapshotManager
 from startup_manager import (
     configure_periodic_task,
@@ -425,6 +426,21 @@ def execute_sync_mdb(config: AgentConfig, force_full: bool = False) -> Dict[str,
         extractor = MDBExtractor(mdb_password=config.mdb_password)
         extracted = extractor.extract_active_products(snapshot_path)
         res = _process_and_upload(config, extracted, force_full=force_full, source_label="MDB")
+
+        # Targeted Sync: Compras de clientes interesados (bajo demanda)
+        try:
+            if config.api_url:
+                compras_ext = ComprasExtractor(
+                    snapshot_mdb_path=snapshot_path,
+                    backend_url=config.api_url,
+                    mdb_password=config.mdb_password,
+                )
+                compras_count = compras_ext.ejecutar_ciclo()
+                if compras_count > 0:
+                    logging.info(f"[COMPRAS] Sincronizadas {compras_count} compras de clientes interesados.")
+        except Exception as e:
+            logging.warning(f"[COMPRAS] Error no bloqueante al sincronizar compras: {e}")
+
         if res.get("mode") != "skip":
             snap_mgr.rotate_backup()
         elif config.max_backups <= 0:

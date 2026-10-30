@@ -57,6 +57,7 @@ import { partir } from './codigoUnico';
 import { importCatalogo } from './importCatalogo';
 import { derivarCostos, fabPersistida, listasDe, PRECIOS_DEFAULT, type Producto } from './modelo';
 import { FIELDS_V1, FIELDS_V2, FIELDS_V2_DC, pageMeta, parseSyncQuery, pickFields, type SyncQuery } from './syncQuery';
+import { handleComprasRoutes } from './compras/routes';
 
 export interface Env {
   DB: D1Database;
@@ -788,6 +789,12 @@ export default {
     const method = request.method;
 
     if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+
+    // ── Módulo comprasED (Aislamiento total del catálogo) ───────────────────
+    if (path.startsWith('/api/v1/compras') || path === '/api/v1/comprasED') {
+      const comprasRes = await handleComprasRoutes(request, env, url, CORS);
+      if (comprasRes) return comprasRes;
+    }
 
     let res: Response;
     try {
