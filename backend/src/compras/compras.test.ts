@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizarDni, validarCompra, type CompraCliente } from './types';
+import { calcularRangoFechas, normalizarDni, validarCompra, type CompraCliente } from './types';
 
 test('normalizarDni: limpia puntos, guiones y espacios', () => {
   assert.equal(normalizarDni(' 39.675.372 '), '39675372');
@@ -9,6 +9,28 @@ test('normalizarDni: limpia puntos, guiones y espacios', () => {
   assert.equal(normalizarDni(''), '');
   assert.equal(normalizarDni(null), '');
   assert.equal(normalizarDni(undefined), '');
+});
+
+test('calcularRangoFechas: calcula ventanas 48h, 7d, 1m y personalizada', () => {
+  const ref = new Date('2026-10-30T12:00:00.000Z');
+
+  // 48h (default)
+  const r48 = calcularRangoFechas('48h', null, null, ref);
+  assert.equal(r48.hasta, '2026-10-30 12:00:00');
+  assert.equal(r48.desde, '2026-10-28 12:00:00');
+
+  // 7d
+  const r7d = calcularRangoFechas('7d', null, null, ref);
+  assert.equal(r7d.desde, '2026-10-23 12:00:00');
+
+  // 1m (30 días)
+  const r1m = calcularRangoFechas('1m', null, null, ref);
+  assert.equal(r1m.desde, '2026-09-30 12:00:00');
+
+  // Personalizada
+  const custom = calcularRangoFechas('personalizada', '2026-08-01T00:00:00.000Z', '2026-08-15T23:59:59.000Z', ref);
+  assert.equal(custom.desde, '2026-08-01 00:00:00');
+  assert.equal(custom.hasta, '2026-08-15 23:59:59');
 });
 
 test('validarCompra: rechaza compras incompletas o sin items', () => {

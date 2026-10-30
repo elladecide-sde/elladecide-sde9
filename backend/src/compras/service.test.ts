@@ -35,11 +35,11 @@ class MockD1Database {
   }
 }
 
-test('ComprasService: registrarInteresados procesa y deduplica DNIs correctamente', async () => {
+test('ComprasService: registrarInteresados procesa y deduplica DNIs con rango', async () => {
   const mockDb = new MockD1Database();
   const service = new ComprasService(mockDb as unknown as D1Database);
 
-  const res = await service.registrarInteresados([' 39.675.372 ', '39675372', '40-123-456']);
+  const res = await service.registrarInteresados([' 39.675.372 ', '39675372', '40-123-456'], '7d');
   assert.equal(res.agregados, 2); // 39675372 duplicado se unifica
   assert.equal(mockDb.batchCalls.length, 1);
   assert.equal(mockDb.batchCalls[0].length, 2);
@@ -54,7 +54,7 @@ test('ComprasService: registrarInteresados ignora vacíos o inválidos', async (
   assert.equal(mockDb.batchCalls.length, 0);
 });
 
-test('ComprasService: guardarComprasBatch separa válidas y genera batches', async () => {
+test('ComprasService: guardarComprasBatch separa válidas e inicializa estado DISPONIBLE', async () => {
   const mockDb = new MockD1Database();
   const service = new ComprasService(mockDb as unknown as D1Database);
 
@@ -89,4 +89,14 @@ test('ComprasService: guardarComprasBatch separa válidas y genera batches', asy
   assert.equal(res.guardadas, 1);
   assert.equal(res.errores.length, 1);
   assert.equal(mockDb.batchCalls.length, 1);
+});
+
+test('ComprasService: confirmarProcesados cambia estado a PROCESADO con timestamp', async () => {
+  const mockDb = new MockD1Database();
+  const service = new ComprasService(mockDb as unknown as D1Database);
+
+  const res = await service.confirmarProcesados([1001, 1002]);
+  assert.equal(res.confirmados, 2);
+  assert.equal(mockDb.batchCalls.length, 1);
+  assert.equal(mockDb.batchCalls[0].length, 2);
 });

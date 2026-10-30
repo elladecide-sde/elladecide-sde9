@@ -183,6 +183,9 @@ ON CONFLICT(key) DO NOTHING;
 -- ── clientes_interesados: DNIs de clientes registrados por Ella ─────────────
 CREATE TABLE IF NOT EXISTS clientes_interesados (
   dni            TEXT PRIMARY KEY,
+  rango          TEXT NOT NULL DEFAULT '48h',
+  fecha_desde    TEXT,
+  fecha_hasta    TEXT,
   requested_at   TEXT NOT NULL DEFAULT (datetime('now')),
   last_synced_at TEXT
 );
@@ -195,7 +198,12 @@ CREATE TABLE IF NOT EXISTS compras_cliente (
   tipo_doc       TEXT NOT NULL DEFAULT '',
   total          REAL NOT NULL DEFAULT 0,
   items_json     TEXT NOT NULL DEFAULT '[]',
+  estado         TEXT NOT NULL DEFAULT 'DISPONIBLE',
+  revision       INTEGER NOT NULL DEFAULT 1,
+  procesado_at   TEXT,
   updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_compras_dni ON compras_cliente(dni);
+CREATE INDEX IF NOT EXISTS idx_compras_estado ON compras_cliente(estado);
+CREATE INDEX IF NOT EXISTS idx_compras_dni_estado ON compras_cliente(dni, estado);
 

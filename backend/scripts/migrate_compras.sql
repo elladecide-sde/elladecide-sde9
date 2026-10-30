@@ -1,19 +1,17 @@
 -- ============================================================================
--- migrate_compras.sql — Tablas para módulo comprasED (100% aditivo e idempotente)
---
--- Aplicar con:
---   npx wrangler d1 execute lola-db --local  --file ./scripts/migrate_compras.sql
---   npx wrangler d1 execute lola-db --remote --file ./scripts/migrate_compras.sql
+-- migrate_compras.sql — Migración idempotente para comprasED con estados y rangos
+-- Compatible tanto con bases limpias como con bases que ya tenían las tablas creadas.
 -- ============================================================================
 
--- Clientes cuyos comprobantes deben ser sincronizados
 CREATE TABLE IF NOT EXISTS clientes_interesados (
   dni            TEXT PRIMARY KEY,
+  rango          TEXT NOT NULL DEFAULT '48h',
+  fecha_desde    TEXT,
+  fecha_hasta    TEXT,
   requested_at   TEXT NOT NULL DEFAULT (datetime('now')),
   last_synced_at TEXT
 );
 
--- Comprobantes agrupados por compra y asociados a un DNI
 CREATE TABLE IF NOT EXISTS compras_cliente (
   id_documento   INTEGER PRIMARY KEY,
   dni            TEXT NOT NULL,
@@ -21,7 +19,21 @@ CREATE TABLE IF NOT EXISTS compras_cliente (
   tipo_doc       TEXT NOT NULL DEFAULT '',
   total          REAL NOT NULL DEFAULT 0,
   items_json     TEXT NOT NULL DEFAULT '[]',
+  estado         TEXT NOT NULL DEFAULT 'DISPONIBLE',
+  revision       INTEGER NOT NULL DEFAULT 1,
+  procesado_at   TEXT,
   updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Si la tabla ya existía sin las nuevas columnas, las agregamos de forma segura:
+ALTER TABLE clientes_interesados ADD COLUMN rango TEXT NOT NULL DEFAULT '48h';
+ALTER TABLE clientes_interesados ADD COLUMN fecha_desde TEXT;
+ALTER TABLE clientes_interesados ADD COLUMN fecha_hasta TEXT;
+
+ALTER TABLE compras_cliente ADD COLUMN estado TEXT NOT NULL DEFAULT 'DISPONIBLE';
+ALTER TABLE compras_cliente ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE compras_cliente ADD COLUMN procesado_at TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_compras_dni ON compras_cliente(dni);
+CREATE INDEX IF NOT EXISTS idx_compras_estado ON compras_cliente(estado);
+CREATE INDEX IF NOT EXISTS idx_compras_dni_estado ON compras_cliente(dni, estado);
