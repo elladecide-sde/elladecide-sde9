@@ -1,13 +1,67 @@
 // ============================================================================
-// compras/routes.ts — Enrutador modular para comprasED, estados y rangos
+// compras/routes.ts — Enrutador modular para comprasED, estados y seguridad
 // ============================================================================
 
+import { bearerToken, safeEqual, verifyJwt } from '../auth';
 import { ComprasService } from './service';
 import { normalizarDni, type CompraCliente, type EstadoCompra, type RangoFecha } from './types';
 
+export interface ComprasEnv {
+  DB: D1Database;
+  JWT_SECRET?: string;
+  COMPRAS_API_KEY?: string;
+}
+
+/**
+ * Valida autenticación por JWT (SyncAgent / Admin)
+ */
+async function requireJwtAuth(request: Request, env: ComprasEnv): Promise<{ ok: boolean; reason?: string }> {
+  if (!env.JWT_SECRET) {
+    // Si no está configurado JWT_SECRET en dev, permite continuar con warning
+    return { ok: true };
+  }
+  const token = bearerToken(request);
+  if (!token) return { ok: false, reason: 'Token de autorización requerido (Authorization: Bearer <token>)' };
+  const payload = await verifyJwt(env.JWT_SECRET, token);
+  if (!payload) return { ok: false, reason: 'Token de autorización inválido o expirado' };
+  return { ok: true };
+}
+
+/**
+ * Valida autenticación para la app de Ella:
+ * Acepta x-api-key (si COMPRAS_API_KEY está configurada) o Bearer JWT.
+ */
+async function requireEllaOrAdminAuth(request: Request, env: ComprasEnv): Promise<{ ok: boolean; reason?: string }> {
+  const apiKey = request.headers.get('x-api-key');
+  if (env.COMPRAS_API_KEY && apiKey) {
+    if (safeEqual(apiKey, env.COMPRAS_API_KEY)) {
+      return { ok: true };
+    }
+  }
+
+  // Fallback a JWT
+  if (env.JWT_SECRET) {
+    const token = bearerToken(request);
+    if (token) {
+      const payload = await verifyJwt(env.JWT_SECRET, token);
+      if (payload) return { ok: true };
+    }
+  }
+
+  // Si no se configuró ninguna clave de protección en el Worker (modo bootstrap/dev)
+  if (!env.COMPRAS_API_KEY && !env.JWT_SECRET) {
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    reason: 'Acceso no autorizado: se requiere header x-api-key o Authorization: Bearer <token>',
+  };
+}
+
 export async function handleComprasRoutes(
   request: Request,
-  env: { DB: D1Database },
+  env: ComprasEnv,
   url: URL,
   corsHeaders: Record<string, string>
 ): Promise<Response | null> {
@@ -16,6 +70,11 @@ export async function handleComprasRoutes(
 
   // 1. GET /api/v1/comprasED?dni=...&estado=DISPONIBLE&rango=48h
   if (request.method === 'GET' && path === '/api/v1/comprasED') {
+    const auth = await requireEllaOrAdminAuth(request, env);
+    if (!auth.ok) {
+      return Response.json({ error: auth.reason }, { status: 401, headers: corsHeaders });
+    }
+
     const rawDni = url.searchParams.get('dni') || url.searchParams.get('cuit');
     const dni = normalizarDni(rawDni);
 
@@ -60,6 +119,11 @@ export async function handleComprasRoutes(
 
   // 2. POST /api/v1/compras/ack (Ella confirma recepción cambiando estado a PROCESADO)
   if (request.method === 'POST' && path === '/api/v1/compras/ack') {
+    const auth = await requireEllaOrAdminAuth(request, env);
+    if (!auth.ok) {
+      return Response.json({ error: auth.reason }, { status: 401, headers: corsHeaders });
+    }
+
     try {
       const body = (await request.json()) as { ids_documentos?: number[] };
       if (!body || !Array.isArray(body.ids_documentos)) {
@@ -84,6 +148,11 @@ export async function handleComprasRoutes(
 
   // 3. POST /api/v1/compras/interesados (Ella informa los DNIs y el rango de fechas)
   if (request.method === 'POST' && path === '/api/v1/compras/interesados') {
+    const auth = await requireEllaOrAdminAuth(request, env);
+    if (!auth.ok) {
+      return Response.json({ error: auth.reason }, { status: 401, headers: corsHeaders });
+    }
+
     try {
       const body = (await request.json()) as {
         dnis?: (string | number)[];
@@ -117,6 +186,11 @@ export async function handleComprasRoutes(
 
   // 4. GET /api/v1/compras/interesados (Sync-agent consulta a quién sincronizar y con qué rango)
   if (request.method === 'GET' && path === '/api/v1/compras/interesados') {
+    const auth = await requireJwtAuth(request, env);
+    if (!auth.ok) {
+      return Response.json({ error: auth.reason }, { status: 401, headers: corsHeaders });
+    }
+
     const interesados = await service.listarInteresados();
     return Response.json(
       {
@@ -129,6 +203,11 @@ export async function handleComprasRoutes(
 
   // 5. POST /api/v1/compras/batch (Sync-agent sube el lote de compras extraídas)
   if (request.method === 'POST' && path === '/api/v1/compras/batch') {
+    const auth = await requireJwtAuth(request, env);
+    if (!auth.ok) {
+      return Response.json({ error: auth.reason }, { status: 401, headers: corsHeaders });
+    }
+
     try {
       const body = (await request.json()) as { compras?: CompraCliente[] };
       if (!body || !Array.isArray(body.compras)) {

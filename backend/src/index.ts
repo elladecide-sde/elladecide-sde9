@@ -64,6 +64,7 @@ export interface Env {
   ADMIN_USER?: string;     // usuario de login (wrangler secret put ADMIN_USER)
   ADMIN_PASSWORD?: string; // contraseña de login (wrangler secret put ADMIN_PASSWORD)
   JWT_SECRET?: string;     // clave de firma del JWT (wrangler secret put JWT_SECRET)
+  COMPRAS_API_KEY?: string;// clave compartida con la app de Ella (wrangler secret put COMPRAS_API_KEY)
 }
 
 type Product = Producto;

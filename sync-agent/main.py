@@ -427,12 +427,20 @@ def execute_sync_mdb(config: AgentConfig, force_full: bool = False) -> Dict[str,
         extracted = extractor.extract_active_products(snapshot_path)
         res = _process_and_upload(config, extracted, force_full=force_full, source_label="MDB")
 
-        # Targeted Sync: Compras de clientes interesados (bajo demanda)
+        # Targeted Sync: Compras de clientes interesados (bajo demanda autenticado)
         try:
-            if config.api_url:
+            if config.api_url and config.api_password:
+                token_jwt = ""
+                try:
+                    uploader = D1Uploader(config.api_url, config.api_user, config.api_password)
+                    token_jwt = uploader.login()
+                except Exception as e:
+                    logging.warning(f"[COMPRAS] No se pudo obtener token JWT para compras: {e}")
+
                 compras_ext = ComprasExtractor(
                     snapshot_mdb_path=snapshot_path,
                     backend_url=config.api_url,
+                    token=token_jwt,
                     mdb_password=config.mdb_password,
                 )
                 compras_count = compras_ext.ejecutar_ciclo()

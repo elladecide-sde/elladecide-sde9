@@ -4,6 +4,7 @@
 # Consulta los DNIs interesados registrados en el Backend (D1) y extrae de
 # AdmGlobal.mdb ÚNICAMENTE los comprobantes de esos DNIs dentro del rango
 # configurado (48hs, 7 días, 1 mes o personalizado).
+# Autenticado: Utiliza token JWT para hablar con el Backend.
 # Optimizado: Reutiliza una única conexión ODBC para todo el lote.
 # ============================================================================
 
@@ -40,7 +41,6 @@ def parsear_fecha_rango(
 
     if hasta_custom:
         try:
-            # Reemplazar Z y normalizar separador
             clean_hasta = hasta_custom.replace("Z", "").replace(" ", "T")
             hasta = datetime.fromisoformat(clean_hasta)
         except Exception:
@@ -68,19 +68,30 @@ class ComprasExtractor:
         self,
         snapshot_mdb_path: str,
         backend_url: str,
+        token: str = "",
         mdb_password: str = "toifel",
         timeout_sec: int = 20,
     ):
         self.snapshot_mdb_path = snapshot_mdb_path
         self.backend_url = backend_url.rstrip("/")
+        self.token = token
         self.mdb_password = mdb_password
         self.timeout_sec = timeout_sec
+
+    def _headers(self) -> Dict[str, str]:
+        h = {
+            "Content-Type": "application/json; charset=utf-8",
+            "User-Agent": "SyncAgenteLola/1.0",
+        }
+        if self.token:
+            h["Authorization"] = f"Bearer {self.token}"
+        return h
 
     def obtener_interesados(self) -> List[Dict[str, Any]]:
         """Consulta al backend los clientes interesados registrados por Ella."""
         url = f"{self.backend_url}/api/v1/compras/interesados"
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "SyncAgenteLola/1.0"})
+            req = urllib.request.Request(url, headers=self._headers())
             with urllib.request.urlopen(req, timeout=self.timeout_sec) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 interesados = data.get("interesados", [])
@@ -199,7 +210,7 @@ class ComprasExtractor:
             conn.close()
 
     def enviar_batch_al_backend(self, compras: List[Dict[str, Any]]) -> bool:
-        """Envía el lote de compras al backend D1 usando urllib."""
+        """Envía el lote de compras al backend D1 usando urllib con Bearer JWT."""
         if not compras:
             return True
 
@@ -212,7 +223,7 @@ class ComprasExtractor:
                 req = urllib.request.Request(
                     url,
                     data=payload,
-                    headers={"Content-Type": "application/json; charset=utf-8", "User-Agent": "SyncAgenteLola/1.0"},
+                    headers=self._headers(),
                     method="POST",
                 )
                 with urllib.request.urlopen(req, timeout=self.timeout_sec) as resp:
