@@ -4,6 +4,7 @@
 # Consulta los DNIs interesados registrados en el Backend (D1) y extrae de
 # AdmGlobal.mdb ÚNICAMENTE los comprobantes de esos DNIs dentro del rango
 # configurado (48hs, 7 días, 1 mes o personalizado).
+# Optimizado: Reutiliza una única conexión ODBC para todo el lote.
 # ============================================================================
 
 from __future__ import annotations
@@ -39,13 +40,16 @@ def parsear_fecha_rango(
 
     if hasta_custom:
         try:
-            hasta = datetime.fromisoformat(hasta_custom.replace("Z", "").replace(" ", "T"))
+            # Reemplazar Z y normalizar separador
+            clean_hasta = hasta_custom.replace("Z", "").replace(" ", "T")
+            hasta = datetime.fromisoformat(clean_hasta)
         except Exception:
             pass
 
     if rango == "personalizada" and desde_custom:
         try:
-            desde = datetime.fromisoformat(desde_custom.replace("Z", "").replace(" ", "T"))
+            clean_desde = desde_custom.replace("Z", "").replace(" ", "T")
+            desde = datetime.fromisoformat(clean_desde)
         except Exception:
             desde = hasta - timedelta(hours=48)
     elif rango == "7d":
@@ -95,13 +99,85 @@ class ComprasExtractor:
             logger.warning(f"No se pudieron obtener interesados del backend: {e}")
             return []
 
+    def _extraer_compras_con_cursor(
+        self,
+        cur: Any,
+        dni: str,
+        fecha_desde: datetime,
+        fecha_hasta: datetime,
+    ) -> List[Dict[str, Any]]:
+        """Extrae compras usando un cursor ODBC ya abierto."""
+        sql = """
+            SELECT
+                d.idDocumento,
+                d.FechaDocumento,
+                d.ValorAPagar,
+                c.NroDoc,
+                dd.Cantidad,
+                dd.PrecioUnitario,
+                dd.SubTotal,
+                a.Nombre,
+                dc.Nombre AS TipoComprobante
+            FROM (((Documentos d
+            INNER JOIN Clientes c ON d.idCliente = c.idCliente)
+            INNER JOIN DocumentosDetalles dd ON d.idDocumento = dd.idDocumento)
+            LEFT JOIN Articulos a ON dd.idArticulo = a.idArticulo)
+            LEFT JOIN DocumentosConfig dc ON d.TipoDocumento = dc.idDoc
+            WHERE d.DocAnulado = 0
+              AND c.NroDoc = ?
+              AND d.FechaDocumento >= ?
+              AND d.FechaDocumento <= ?
+            ORDER BY d.FechaDocumento DESC, d.idDocumento DESC
+        """
+        cur.execute(sql, (dni, fecha_desde, fecha_hasta))
+        rows = cur.fetchall()
+
+        compras_map: Dict[int, Dict[str, Any]] = {}
+        for r in rows:
+            id_doc = int(r[0])
+            fecha_doc = r[1]
+            fecha_iso = fecha_doc.isoformat() if isinstance(fecha_doc, datetime) else str(fecha_doc)
+            total = float(r[2]) if isinstance(r[2], (Decimal, float, int)) else 0.0
+            cliente_dni = normalizar_dni(r[3])
+            cantidad = float(r[4]) if r[4] is not None else 1.0
+            precio_u = float(r[5]) if isinstance(r[5], (Decimal, float, int)) else 0.0
+            subtotal = float(r[6]) if isinstance(r[6], (Decimal, float, int)) else (cantidad * precio_u)
+            nombre_art = (r[7] or "").strip()
+            tipo_comprobante = (r[8] or "").strip()
+
+            codigo_unico = ""
+            if nombre_art:
+                marca_toks, modelo, _ = partir(nombre_art)
+                abrev_marca = abrev(marca_toks, 3)
+                codigo_unico = f"{abrev_marca}{modelo}".strip()
+
+            if id_doc not in compras_map:
+                compras_map[id_doc] = {
+                    "id_documento": id_doc,
+                    "dni": cliente_dni,
+                    "fecha": fecha_iso,
+                    "tipo_doc": tipo_comprobante,
+                    "total": total,
+                    "items": [],
+                }
+
+            compras_map[id_doc]["items"].append({
+                "codigo_unico": codigo_unico,
+                "descripcion": nombre_art,
+                "cantidad": cantidad,
+                "precio_unitario": precio_u,
+                "subtotal": subtotal,
+            })
+
+        return list(compras_map.values())
+
     def extraer_compras_cliente(
         self,
         dni: str,
         fecha_desde: datetime,
         fecha_hasta: datetime,
     ) -> List[Dict[str, Any]]:
-        """Extrae compras no anuladas de un DNI dentro de una ventana temporal."""
+        """Extrae compras no anuladas de un DNI abriendo conexión puntual."""
         if not dni:
             return []
 
@@ -118,70 +194,7 @@ class ComprasExtractor:
         conn = pyodbc.connect(conn_str)
         try:
             cur = conn.cursor()
-
-            sql = """
-                SELECT
-                    d.idDocumento,
-                    d.FechaDocumento,
-                    d.ValorAPagar,
-                    c.NroDoc,
-                    dd.Cantidad,
-                    dd.PrecioUnitario,
-                    dd.SubTotal,
-                    a.Nombre,
-                    dc.Nombre AS TipoComprobante
-                FROM (((Documentos d
-                INNER JOIN Clientes c ON d.idCliente = c.idCliente)
-                INNER JOIN DocumentosDetalles dd ON d.idDocumento = dd.idDocumento)
-                LEFT JOIN Articulos a ON dd.idArticulo = a.idArticulo)
-                LEFT JOIN DocumentosConfig dc ON d.TipoDocumento = dc.idDoc
-                WHERE d.DocAnulado = 0
-                  AND c.NroDoc = ?
-                  AND d.FechaDocumento >= ?
-                  AND d.FechaDocumento <= ?
-                ORDER BY d.FechaDocumento DESC, d.idDocumento DESC
-            """
-            cur.execute(sql, (dni, fecha_desde, fecha_hasta))
-            rows = cur.fetchall()
-
-            compras_map: Dict[int, Dict[str, Any]] = {}
-            for r in rows:
-                id_doc = int(r[0])
-                fecha_doc = r[1]
-                fecha_iso = fecha_doc.isoformat() if isinstance(fecha_doc, datetime) else str(fecha_doc)
-                total = float(r[2]) if isinstance(r[2], (Decimal, float, int)) else 0.0
-                cliente_dni = normalizar_dni(r[3])
-                cantidad = float(r[4]) if r[4] is not None else 1.0
-                precio_u = float(r[5]) if isinstance(r[5], (Decimal, float, int)) else 0.0
-                subtotal = float(r[6]) if isinstance(r[6], (Decimal, float, int)) else (cantidad * precio_u)
-                nombre_art = (r[7] or "").strip()
-                tipo_comprobante = (r[8] or "").strip()
-
-                codigo_unico = ""
-                if nombre_art:
-                    marca_toks, modelo, _ = partir(nombre_art)
-                    abrev_marca = abrev(marca_toks, 3)
-                    codigo_unico = f"{abrev_marca}{modelo}".strip()
-
-                if id_doc not in compras_map:
-                    compras_map[id_doc] = {
-                        "id_documento": id_doc,
-                        "dni": cliente_dni,
-                        "fecha": fecha_iso,
-                        "tipo_doc": tipo_comprobante,
-                        "total": total,
-                        "items": [],
-                    }
-
-                compras_map[id_doc]["items"].append({
-                    "codigo_unico": codigo_unico,
-                    "descripcion": nombre_art,
-                    "cantidad": cantidad,
-                    "precio_unitario": precio_u,
-                    "subtotal": subtotal,
-                })
-
-            return list(compras_map.values())
+            return self._extraer_compras_con_cursor(cur, dni, fecha_desde, fecha_hasta)
         finally:
             conn.close()
 
@@ -192,7 +205,7 @@ class ComprasExtractor:
 
         url = f"{self.backend_url}/api/v1/compras/batch"
         try:
-            chunk_size = 100
+            chunk_size = 50
             for i in range(0, len(compras), chunk_size):
                 chunk = compras[i : i + chunk_size]
                 payload = json.dumps({"compras": chunk}).encode("utf-8")
@@ -211,7 +224,7 @@ class ComprasExtractor:
             return False
 
     def ejecutar_ciclo(self) -> int:
-        """Ciclo completo: pide interesados con sus rangos -> extrae MDB -> sube a D1."""
+        """Ciclo completo: pide interesados -> abre 1 conexión ODBC -> extrae -> sube a D1."""
         interesados = self.obtener_interesados()
         if not interesados:
             logger.info("No hay clientes interesados para sincronizar compras.")
@@ -220,17 +233,32 @@ class ComprasExtractor:
         logger.info(f"Sincronizando compras para {len(interesados)} clientes interesados...")
         todas_las_compras: List[Dict[str, Any]] = []
 
-        for item in interesados:
-            dni = item["dni"]
-            rango = item.get("rango", "48h")
-            desde, hasta = parsear_fecha_rango(
-                rango=rango,
-                desde_custom=item.get("fecha_desde"),
-                hasta_custom=item.get("fecha_hasta"),
-            )
-            compras_cli = self.extraer_compras_cliente(dni, desde, hasta)
-            logger.info(f"DNI {dni} (rango {rango}): {len(compras_cli)} compras encontradas.")
-            todas_las_compras.extend(compras_cli)
+        import pyodbc
+
+        conn_str = (
+            r"DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};"
+            f"DBQ={self.snapshot_mdb_path};"
+            "Mode=Read;"
+        )
+        if self.mdb_password:
+            conn_str += f"PWD={self.mdb_password};"
+
+        conn = pyodbc.connect(conn_str)
+        try:
+            cur = conn.cursor()
+            for item in interesados:
+                dni = item["dni"]
+                rango = item.get("rango", "48h")
+                desde, hasta = parsear_fecha_rango(
+                    rango=rango,
+                    desde_custom=item.get("fecha_desde"),
+                    hasta_custom=item.get("fecha_hasta"),
+                )
+                compras_cli = self._extraer_compras_con_cursor(cur, dni, desde, hasta)
+                logger.info(f"DNI {dni} (rango {rango}): {len(compras_cli)} compras encontradas.")
+                todas_las_compras.extend(compras_cli)
+        finally:
+            conn.close()
 
         if todas_las_compras:
             self.enviar_batch_al_backend(todas_las_compras)
