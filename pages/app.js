@@ -2152,7 +2152,65 @@ Restaura el catálogo al estado de \`bak\` o \`bak2\` revirtiendo el reemplazo a
 { "backup": "bak" }
 \`\`\`
 
-## 7. Modelo de Precios y Reglas de Negocio
+## 7. Módulo comprasED (Historial de Compras por Cliente & Targeted Sync)
+
+API bajo demanda para consultar las compras de clientes específicos registrados en Ella sin exponer comprobantes masivos ni duplicar lecturas.
+
+### Autenticación Requerida
+Todas las llamadas de Ella requieren el encabezado:
+\`\`\`http
+x-api-key: <COMPRAS_API_KEY>
+\`\`\`
+
+### 1. Registrar Clientes a Sincronizar: POST \`/api/v1/compras/interesados\`
+Informa qué DNIs deben ser extraídos desde AdmGlobal:
+\`\`\`json
+{
+  "dnis": ["32685684"],
+  "rango": "48h"
+}
+\`\`\`
+- \`rango\` (opcional): \`"48h"\` (predeterminado), \`"7d"\`, \`"1m"\` o \`"personalizada"\` (con \`desde\` y \`hasta\` en formato ISO).
+
+### 2. Consultar Compras: GET \`/api/v1/comprasED\`
+Ejemplo: \`GET /api/v1/comprasED?dni=32685684&estado=DISPONIBLE\`
+Respuesta:
+\`\`\`json
+{
+  "dni": "32685684",
+  "total_compras": 1,
+  "estado_filtrado": "DISPONIBLE",
+  "compras": [
+    {
+      "id_documento": 189130,
+      "dni": "32685684",
+      "fecha": "2026-09-03T20:22:02",
+      "tipo_doc": "Ticket B",
+      "total": 97207.8,
+      "estado": "DISPONIBLE",
+      "items": [
+        {
+          "codigo_unico": "KAUP160",
+          "descripcion": "KAURY P160 PACKS CULOTTE LESS ALGODON",
+          "cantidad": 1.0,
+          "precio_unitario": 10891.49,
+          "subtotal": 10891.49
+        }
+      ]
+    }
+  ]
+}
+\`\`\`
+
+### 3. Confirmar Recepción (ACK): POST \`/api/v1/compras/ack\`
+Evita la duplicación en consultas posteriores marcando los documentos como \`PROCESADO\`:
+\`\`\`json
+{
+  "ids_documentos": [189130]
+}
+\`\`\`
+
+## 8. Modelo de Precios y Reglas de Negocio
 - \`precios\`: Array de 4 enteros \`[Lista 1, Lista 2, Lista 3, Lista 4]\`.
 - \`Lista 4\`: Precio base de referencia de catálogo.
 - \`oferta\`: Si es \`true\`, todas las listas se igualan al precio de oferta.
@@ -2160,7 +2218,7 @@ Restaura el catálogo al estado de \`bak\` o \`bak2\` revirtiendo el reemplazo a
   - \`costo_iva = Lista 4 / (1 + factor_inversa_l4 / 100)\`
   - \`costo_neto = costo_iva / (1 + IVA / 100)\`
 
-## 8. Observaciones Técnicas Clave para Agentes
+## 9. Observaciones Técnicas Clave para Agentes
 - **CORS Activo:** \`Access-Control-Allow-Origin: *\` habilitado en todas las rutas.
 - **Cache-Control:** Respuestas con \`Cache-Control: no-store\` para evitar datos cacheados obsoletos.
 - **Formato de Fechas:** Timestamps UTC \`YYYY-MM-DD HH:MM:SS\`.

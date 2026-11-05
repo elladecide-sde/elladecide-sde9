@@ -619,6 +619,23 @@
         </div>
 
         <div class="guia-block">
+          <div class="guia-block-title">🛍️ Módulo comprasED (Historial de Compras y Targeted Sync)</div>
+          <p class="guia-text">Sincronización bajo demanda y consulta de historial de compras por cliente para la plataforma de Ella:</p>
+          <ul class="guia-list">
+            <li><strong>Autenticación:</strong> Requiere el encabezado <code>x-api-key: &lt;COMPRAS_API_KEY&gt;</code> en cada petición.</li>
+            <li><strong>1. Registrar DNIs de Interés (POST <code>/api/v1/compras/interesados</code>):</strong>
+              Envía la lista de clientes a sincronizar: <code>{"dnis": ["32685684"], "rango": "48h"}</code>. Rangos: <code>"48h"</code> (default), <code>"7d"</code>, <code>"1m"</code> o <code>"personalizada"</code> con <code>desde</code> y <code>hasta</code>.
+            </li>
+            <li><strong>2. Consultar Compras (GET <code>/api/v1/comprasED?dni=...&amp;estado=DISPONIBLE</code>):</strong>
+              Devuelve los comprobantes y el desglose de artículos (<code>codigo_unico</code>, <code>descripcion</code>, <code>cantidad</code>, <code>precio_unitario</code>, <code>subtotal</code>) no leídos.
+            </li>
+            <li><strong>3. Confirmar Procesamiento / ACK (POST <code>/api/v1/compras/ack</code>):</strong>
+              Una vez guardadas en la app/Firebase, envía <code>{"ids_documentos": [189130]}</code> para marcarlas como <code>PROCESADO</code> y que no se repitan en futuras consultas.
+            </li>
+          </ul>
+        </div>
+
+        <div class="guia-block">
           <div class="guia-block-title">⚠️ Observaciones y Detalles Técnicos</div>
           <ul class="guia-list">
             <li><strong>CORS Universal:</strong> Encabezado <code>Access-Control-Allow-Origin: *</code> activo en todas las rutas para consumo directo desde navegadores y paneles web.</li>
