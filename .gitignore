@@ -40,6 +40,7 @@ build/
 dist/
 sync-agent/build/
 sync-agent/dist/
+sync-agent/dist-v2/
 sync-agent/__pycache__/
 
 # Logs & Temp
