@@ -41,6 +41,7 @@
     <nav class="tabs" id="tabs" hidden>
       <button class="tab active" data-vista="inventario" type="button">📦 Inventario</button>
       <button class="tab" data-vista="catalogo" type="button">📂 Catálogo</button>
+      <button class="tab" data-vista="compras" type="button">🛍️ Compras ED</button>
       <button class="tab" data-vista="config" type="button">⚙️ Configuración</button>
       <button class="tab" data-vista="admin" type="button">🗂️ Administración</button>
     </nav>
@@ -124,6 +125,109 @@
           <button id="rollbackBak2" class="btn danger" type="button">⏪ Restaurar bak2</button>
         </div>
         <span id="rollbackStatus" class="status"></span>
+      </section>
+    </section>
+
+    <!-- ══ COMPRAS ED (Targeted Sync & Admin) ═══════════════════════════════ -->
+    <section class="view" id="view-compras" hidden>
+      <div class="inv-head">
+        <div>
+          <h2 class="block-title">🛍️ Compras ED (Targeted Sync)</h2>
+          <p class="muted inv-sub" id="comprasMeta">Gestión de clientes interesados, histórico de compras y estado de sincronización.</p>
+        </div>
+        <button id="comprasRecargar" class="btn ghost" type="button">↺ Actualizar</button>
+      </div>
+
+      <!-- Bloque 1: Agregar cliente interesado -->
+      <section class="block">
+        <h3 class="block-title">➕ Registrar Clientes para Sincronizar</h3>
+        <p class="hint">
+          Ingresá uno o varios DNIs/CUITs (separados por coma o espacio). El sync-agent en la PC local extraerá únicamente las compras de estos clientes en su próximo ciclo hacia Cloudflare D1.
+        </p>
+        <div class="cols" style="align-items: flex-end; margin-bottom: 8px;">
+          <label class="field" style="flex: 2;">
+            <span>DNI(s) o CUIT(s)</span>
+            <input type="text" id="comprasInputDnis" placeholder="Ej: 32685684, 39675372, 20396753721" autocomplete="off">
+          </label>
+          <label class="field" style="flex: 1;">
+            <span>Ventana de Tiempo</span>
+            <select id="comprasSelectRango">
+              <option value="48h" selected>Últimas 48 horas (Default)</option>
+              <option value="7d">Últimos 7 días</option>
+              <option value="1m">Último mes (30 días)</option>
+              <option value="personalizada">Personalizada</option>
+            </select>
+          </label>
+          <div id="comprasCustomDates" class="cols" style="flex: 2; margin: 0;" hidden>
+            <label class="field">
+              <span>Desde</span>
+              <input type="date" id="comprasDesde">
+            </label>
+            <label class="field">
+              <span>Hasta</span>
+              <input type="date" id="comprasHasta">
+            </label>
+          </div>
+          <button id="btnRegistrarInteresado" class="btn primary" type="button" style="height: 38px;">➕ Registrar</button>
+        </div>
+        <span id="comprasRegStatus" class="status"></span>
+      </section>
+
+      <!-- Bloque 2: Lista de Clientes Interesados -->
+      <section class="block">
+        <div class="inv-head">
+          <h3 class="block-title">📋 Clientes en Lista de Sincronización (<span id="comprasCountInteresados">0</span>)</h3>
+        </div>
+        <div class="table-wrap">
+          <table class="config-table" id="tablaInteresados">
+            <thead>
+              <tr>
+                <th style="width: 25%">DNI / CUIT</th>
+                <th style="width: 20%">Rango Configurado</th>
+                <th style="width: 25%">Última Sincronización</th>
+                <th style="width: 30%; text-align: center;">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyInteresados">
+              <tr><td colspan="4" class="muted" style="text-align: center; padding: 16px;">Cargando clientes…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Bloque 3: Explorador y visor de Compras del Cliente -->
+      <section class="block">
+        <div class="inv-head">
+          <div>
+            <h3 class="block-title">🔍 Explorador de Compras por Cliente</h3>
+            <p class="muted inv-sub">Consultá las compras recuperadas de un cliente específico, sus artículos y su estado actual.</p>
+          </div>
+        </div>
+        <div class="cols" style="align-items: flex-end; margin-bottom: 12px;">
+          <label class="field" style="flex: 2;">
+            <span>DNI a consultar</span>
+            <input type="text" id="comprasBuscarDni" placeholder="Ingresá un DNI cargado…">
+          </label>
+          <label class="field" style="flex: 1;">
+            <span>Filtro de Estado</span>
+            <select id="comprasFiltroEstado">
+              <option value="">Todos los comprobantes</option>
+              <option value="DISPONIBLE">Solo DISPONIBLE (Pendientes)</option>
+              <option value="PROCESADO">Solo PROCESADO (Ya leídos)</option>
+            </select>
+          </label>
+          <button id="btnConsultarCompras" class="btn secondary" type="button" style="height: 38px;">🔍 Ver compras</button>
+        </div>
+        <span id="comprasVisorStatus" class="status"></span>
+
+        <!-- Resultados de Compras -->
+        <div id="comprasResultadosWrap" hidden>
+          <div class="inv-legend muted" style="margin-top: 8px;">
+            <span id="comprasResultadosCount">0 compras encontradas</span>
+            <button id="btnResetearComprasDni" class="btn ghost btn-sm" type="button" title="Pasa todas las compras de este DNI a estado DISPONIBLE para volver a probar el flujo de lectura">↺ Resetear a DISPONIBLE</button>
+          </div>
+          <div id="comprasListaCards" style="display: flex; flex-direction: column; gap: 12px; margin-top: 8px;"></div>
+        </div>
       </section>
     </section>
 

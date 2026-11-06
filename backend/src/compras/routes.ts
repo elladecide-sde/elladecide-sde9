@@ -186,7 +186,7 @@ export async function handleComprasRoutes(
 
   // 4. GET /api/v1/compras/interesados (Sync-agent consulta a quién sincronizar y con qué rango)
   if (request.method === 'GET' && path === '/api/v1/compras/interesados') {
-    const auth = await requireJwtAuth(request, env);
+    const auth = await requireEllaOrAdminAuth(request, env);
     if (!auth.ok) {
       return Response.json({ error: auth.reason }, { status: 401, headers: corsHeaders });
     }
@@ -199,6 +199,43 @@ export async function handleComprasRoutes(
       },
       { status: 200, headers: corsHeaders }
     );
+  }
+
+  // 4b. DELETE /api/v1/compras/interesados/:dni (Elimina cliente interesado desde el panel)
+  if (request.method === 'DELETE' && path.startsWith('/api/v1/compras/interesados/')) {
+    const auth = await requireEllaOrAdminAuth(request, env);
+    if (!auth.ok) {
+      return Response.json({ error: auth.reason }, { status: 401, headers: corsHeaders });
+    }
+
+    const dni = normalizarDni(path.replace('/api/v1/compras/interesados/', ''));
+    if (!dni) {
+      return Response.json({ error: 'DNI inválido' }, { status: 400, headers: corsHeaders });
+    }
+
+    const ok = await service.eliminarInteresado(dni);
+    return Response.json({ ok, dni }, { status: 200, headers: corsHeaders });
+  }
+
+  // 4c. POST /api/v1/compras/reset (Resetea estado de compras de un DNI a DISPONIBLE)
+  if (request.method === 'POST' && path === '/api/v1/compras/reset') {
+    const auth = await requireEllaOrAdminAuth(request, env);
+    if (!auth.ok) {
+      return Response.json({ error: auth.reason }, { status: 401, headers: corsHeaders });
+    }
+
+    try {
+      const body = (await request.json()) as { dni?: string };
+      const dni = normalizarDni(body.dni);
+      if (!dni) {
+        return Response.json({ error: 'DNI requerido' }, { status: 400, headers: corsHeaders });
+      }
+
+      const res = await service.resetearEstadoCompras(dni);
+      return Response.json({ ok: true, dni, actualizadas: res.actualizadas }, { status: 200, headers: corsHeaders });
+    } catch {
+      return Response.json({ error: 'JSON inválido' }, { status: 400, headers: corsHeaders });
+    }
   }
 
   // 5. POST /api/v1/compras/batch (Sync-agent sube el lote de compras extraídas)

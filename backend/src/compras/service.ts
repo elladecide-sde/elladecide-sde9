@@ -215,6 +215,29 @@ export class ComprasService {
   }
 
   /**
+   * Elimina un cliente interesado de la lista (para gestión desde el panel).
+   */
+  async eliminarInteresado(dni: string): Promise<boolean> {
+    const res = await this.db.prepare('DELETE FROM clientes_interesados WHERE dni = ?1').bind(dni).run();
+    return (res.meta.changes ?? 0) > 0;
+  }
+
+  /**
+   * Resetea el estado de compras de un DNI a 'DISPONIBLE' (para re-sincronizar o re-testear).
+   */
+  async resetearEstadoCompras(dni: string): Promise<{ actualizadas: number }> {
+    const res = await this.db
+      .prepare(
+        `UPDATE compras_cliente
+         SET estado = 'DISPONIBLE', procesado_at = NULL, updated_at = datetime('now')
+         WHERE dni = ?1`
+      )
+      .bind(dni)
+      .run();
+    return { actualizadas: res.meta.changes ?? 0 };
+  }
+
+  /**
    * Confirma la lectura/procesamiento de documentos (ACK) cambiando el estado a 'PROCESADO'.
    */
   async confirmarProcesados(idsDocumentos: number[]): Promise<{ confirmados: number }> {

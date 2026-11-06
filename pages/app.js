@@ -324,7 +324,7 @@ function setLoginStatus(msg, ok) {
 }
 
 // ── Secciones (tabs) ────────────────────────────────────────────────────────
-const VISTAS = ['inventario', 'catalogo', 'config', 'admin'];
+const VISTAS = ['inventario', 'catalogo', 'compras', 'config', 'admin'];
 let vistaActual = 'inventario';
 
 function setVista(v) {
@@ -334,6 +334,7 @@ function setVista(v) {
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.vista === v));
 
   if (v === 'inventario' && inventario === null) cargarInventario();
+  if (v === 'compras') cargarInteresados();
   if (v === 'config') cargarModoSync();
   if (v === 'admin') cargarParserConfig();
 }
@@ -2289,5 +2290,275 @@ $('guiaModal').addEventListener('click', (e) => {
   );
   if (e.target === $('guiaModal') && !clickEnDialog) {
     cerrarGuiaConfig();
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Sección Compras ED (Targeted Sync & Admin)
+// ════════════════════════════════════════════════════════════════════════════
+
+let clientesInteresados = [];
+
+function setComprasRegStatus(msg, ok) {
+  const el = $('comprasRegStatus');
+  el.textContent = msg;
+  el.className = 'status ' + (ok ? 'ok' : 'err');
+}
+
+function setComprasVisorStatus(msg, ok) {
+  const el = $('comprasVisorStatus');
+  el.textContent = msg;
+  el.className = 'status ' + (ok ? 'ok' : 'err');
+}
+
+// Selector de rango en compras
+$('comprasSelectRango').addEventListener('change', (e) => {
+  $('comprasCustomDates').hidden = e.target.value !== 'personalizada';
+});
+
+// Cargar lista de clientes interesados desde la API
+async function cargarInteresados() {
+  const tbody = $('tbodyInteresados');
+  try {
+    const res = await apiFetch('/api/v1/compras/interesados');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    clientesInteresados = data.interesados || [];
+
+    $('comprasCountInteresados').textContent = clientesInteresados.length;
+    renderInteresados(clientesInteresados);
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="4" class="status err" style="text-align:center; padding: 16px;">Error cargando clientes: ${err.message}</td></tr>`;
+  }
+}
+
+function renderInteresados(lista) {
+  const tbody = $('tbodyInteresados');
+  tbody.innerHTML = '';
+
+  if (lista.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" class="muted" style="text-align:center; padding: 16px;">No hay clientes registrados para sincronizar. Ingresá un DNI arriba para comenzar.</td></tr>`;
+    return;
+  }
+
+  lista.forEach((item) => {
+    const tr = document.createElement('tr');
+
+    const tdDni = document.createElement('td');
+    tdDni.innerHTML = `<strong>${item.dni}</strong>`;
+
+    const tdRango = document.createElement('td');
+    let rangoLabel = item.rango || '48h';
+    if (rangoLabel === '48h') rangoLabel = '48 horas';
+    else if (rangoLabel === '7d') rangoLabel = '7 días';
+    else if (rangoLabel === '1m') rangoLabel = '1 mes';
+    else if (rangoLabel === 'personalizada') {
+      rangoLabel = `Personalizada (${item.fecha_desde || ''} a ${item.fecha_hasta || ''})`;
+    }
+    tdRango.textContent = rangoLabel;
+
+    const tdSync = document.createElement('td');
+    if (item.last_synced_at) {
+      tdSync.innerHTML = `<span class="pill ok" style="font-size:11px;">✓ ${item.last_synced_at}</span>`;
+    } else {
+      tdSync.innerHTML = `<span class="pill" style="font-size:11px; color:#ffb74d;">⏳ Pendiente de sync</span>`;
+    }
+
+    const tdAcciones = document.createElement('td');
+    tdAcciones.style.textAlign = 'center';
+
+    const btnVer = document.createElement('button');
+    btnVer.className = 'btn ghost btn-sm';
+    btnVer.textContent = '🔍 Ver compras';
+    btnVer.type = 'button';
+    btnVer.style.marginRight = '6px';
+    btnVer.addEventListener('click', () => {
+      $('comprasBuscarDni').value = item.dni;
+      consultarComprasCliente(item.dni);
+    });
+
+    const btnEliminar = document.createElement('button');
+    btnEliminar.className = 'btn ghost btn-sm';
+    btnEliminar.textContent = '🗑️';
+    btnEliminar.title = 'Quitar cliente de la lista de sincronización';
+    btnEliminar.type = 'button';
+    btnEliminar.addEventListener('click', async () => {
+      const ok = await showConfirm(`¿Quitar el DNI ${item.dni} de la lista de sincronización?`, '🗑️');
+      if (!ok) return;
+      try {
+        const res = await apiFetch(`/api/v1/compras/interesados/${item.dni}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        toast(`Cliente ${item.dni} quitado de la lista`, 'ok');
+        cargarInteresados();
+      } catch (e) {
+        toast('Error al eliminar cliente: ' + e.message, 'err');
+      }
+    });
+
+    tdAcciones.append(btnVer, btnEliminar);
+    tr.append(tdDni, tdRango, tdSync, tdAcciones);
+    tbody.appendChild(tr);
+  });
+}
+
+// Registrar nuevo cliente interesado
+$('btnRegistrarInteresado').addEventListener('click', async () => {
+  const input = $('comprasInputDnis').value.trim();
+  if (!input) {
+    setComprasRegStatus('Ingresá al menos un DNI o CUIT', false);
+    return;
+  }
+
+  const dnis = input.split(/[\s,;]+/).filter(Boolean);
+  const rango = $('comprasSelectRango').value;
+  const desde = $('comprasDesde').value;
+  const hasta = $('comprasHasta').value;
+
+  const payload = { dnis, rango };
+  if (rango === 'personalizada') {
+    payload.desde = desde ? `${desde} 00:00:00` : null;
+    payload.hasta = hasta ? `${hasta} 23:59:59` : null;
+  }
+
+  setComprasRegStatus('Registrando clientes…', true);
+  try {
+    const res = await apiFetch('/api/v1/compras/interesados', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    setComprasRegStatus(`✅ ${data.procesados} cliente(s) registrado(s) con rango ${data.rango_configurado}`, true);
+    toast(`Registrados ${data.procesados} cliente(s) para sincronizar`, 'ok');
+    $('comprasInputDnis').value = '';
+    cargarInteresados();
+  } catch (err) {
+    setComprasRegStatus(err.message, false);
+  }
+});
+
+$('comprasRecargar').addEventListener('click', () => {
+  cargarInteresados();
+  const dniActual = $('comprasBuscarDni').value.trim();
+  if (dniActual) consultarComprasCliente(dniActual);
+});
+
+// Consultar compras de un cliente en particular
+async function consultarComprasCliente(dni) {
+  if (!dni) return;
+  const wrap = $('comprasResultadosWrap');
+  const cont = $('comprasListaCards');
+  const countLbl = $('comprasResultadosCount');
+  const estadoFiltro = $('comprasFiltroEstado').value;
+
+  wrap.hidden = false;
+  cont.innerHTML = '<div class="muted" style="text-align:center; padding: 20px;">Consultando compras en D1…</div>';
+  setComprasVisorStatus('Buscando compras…', true);
+
+  try {
+    let url = `/api/v1/comprasED?dni=${encodeURIComponent(dni)}&limit=100`;
+    if (estadoFiltro) url += `&estado=${encodeURIComponent(estadoFiltro)}`;
+
+    const res = await apiFetch(url);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    const compras = data.compras || [];
+
+    setComprasVisorStatus('', true);
+    countLbl.textContent = `${compras.length} compra(s) encontrada(s) para DNI ${dni}`;
+    cont.innerHTML = '';
+
+    if (compras.length === 0) {
+      cont.innerHTML = `
+        <div class="card" style="padding: 16px; text-align: center; border: 1px dashed var(--border);">
+          <p class="muted" style="margin: 0;">No se encontraron comprobantes para este DNI con el filtro seleccionado.</p>
+          <p class="hint" style="margin-top: 6px;">Si el cliente es nuevo, el sync-agent local los sincronizará en su próximo ciclo.</p>
+        </div>
+      `;
+      return;
+    }
+
+    compras.forEach((c) => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.style.padding = '14px 18px';
+      card.style.border = '1px solid var(--border)';
+      card.style.backgroundColor = 'var(--bg-elevated, #1e293b)';
+
+      const esDisp = c.estado === 'DISPONIBLE';
+      const pillEstado = esDisp
+        ? '<span class="pill" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8;">📥 DISPONIBLE (Pendiente de lectura)</span>'
+        : '<span class="pill ok" style="font-size: 11px;">✓ PROCESADO</span>';
+
+      const itemsHtml = (c.items || []).map((it) => `
+        <div style="display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; border-bottom: 1px dashed rgba(255,255,255,0.08);">
+          <span style="color: var(--text-primary);">
+            <strong style="color: var(--accent);">${it.codigo_unico || '—'}</strong> · ${it.descripcion}
+          </span>
+          <span class="muted">
+            ${it.cantidad} x $${Number(it.precio_unitario || 0).toLocaleString('es-AR')} = 
+            <strong style="color: var(--text-primary);">$${Number(it.subtotal || 0).toLocaleString('es-AR')}</strong>
+          </span>
+        </div>
+      `).join('');
+
+      card.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <div>
+            <strong style="font-size: 15px;">#${c.id_documento}</strong> · <span class="muted">${c.tipo_doc || 'Comprobante'}</span>
+            <span class="muted" style="font-size: 12px; margin-left: 8px;">📅 ${c.fecha}</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            ${pillEstado}
+            <span style="font-size: 15px; font-weight: bold; color: #4ade80;">$${Number(c.total || 0).toLocaleString('es-AR')}</span>
+          </div>
+        </div>
+        <div style="margin-top: 8px; background: rgba(0,0,0,0.15); border-radius: 6px; padding: 6px 10px;">
+          ${itemsHtml || '<span class="muted" style="font-size:12px;">Sin detalle de artículos</span>'}
+        </div>
+      `;
+
+      cont.appendChild(card);
+    });
+  } catch (err) {
+    setComprasVisorStatus(err.message, false);
+    cont.innerHTML = `<div class="status err" style="padding: 12px;">Error: ${err.message}</div>`;
+  }
+}
+
+$('btnConsultarCompras').addEventListener('click', () => {
+  const dni = $('comprasBuscarDni').value.trim();
+  if (!dni) {
+    setComprasVisorStatus('Ingresá un DNI para consultar', false);
+    return;
+  }
+  consultarComprasCliente(dni);
+});
+
+// Resetear estado de compras a DISPONIBLE para pruebas
+$('btnResetearComprasDni').addEventListener('click', async () => {
+  const dni = $('comprasBuscarDni').value.trim();
+  if (!dni) return;
+
+  const ok = await showConfirm(`¿Resetear todas las compras del DNI ${dni} a estado 'DISPONIBLE'? Esto permitirá simular nuevamente la lectura en la app de Ella.`, '↺');
+  if (!ok) return;
+
+  try {
+    const res = await apiFetch('/api/v1/compras/reset', {
+      method: 'POST',
+      body: JSON.stringify({ dni }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    toast(`Actualizadas ${data.actualizadas} compras a DISPONIBLE`, 'ok');
+    consultarComprasCliente(dni);
+  } catch (err) {
+    toast('Error reseteando compras: ' + err.message, 'err');
   }
 });
