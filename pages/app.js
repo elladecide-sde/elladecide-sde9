@@ -2328,6 +2328,10 @@ $('guiaModal').addEventListener('click', (e) => {
 // Sección Compras ED (Targeted Sync & Admin)
 // ════════════════════════════════════════════════════════════════════════════
 
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]);
+}
+
 let clientesInteresados = [];
 
 function setComprasRegStatus(msg, ok) {
@@ -2447,8 +2451,12 @@ $('btnRegistrarInteresado').addEventListener('click', async () => {
 
   const payload = { dnis, rango };
   if (rango === 'personalizada') {
-    payload.desde = desde ? `${desde} 00:00:00` : null;
-    payload.hasta = hasta ? `${hasta} 23:59:59` : null;
+    if (!desde || !hasta) {
+      setComprasRegStatus('Completá las fechas Desde y Hasta para el rango personalizado', false);
+      return;
+    }
+    payload.desde = `${desde} 00:00:00`;
+    payload.hasta = `${hasta} 23:59:59`;
   }
 
   setComprasRegStatus('Registrando clientes…', true);
@@ -2530,7 +2538,7 @@ async function consultarComprasCliente(dni) {
       const itemsHtml = (c.items || []).map((it) => `
         <div style="display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; border-bottom: 1px dashed rgba(255,255,255,0.08);">
           <span style="color: var(--text-primary);">
-            <strong style="color: var(--accent);">${it.codigo_unico || '—'}</strong> · ${it.descripcion}
+            <strong style="color: var(--accent);">${escapeHtml(it.codigo_unico || '—')}</strong> · ${escapeHtml(it.descripcion)}
           </span>
           <span class="muted">
             ${it.cantidad} x $${Number(it.precio_unitario || 0).toLocaleString('es-AR')} = 
@@ -2542,8 +2550,8 @@ async function consultarComprasCliente(dni) {
       card.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
           <div>
-            <strong style="font-size: 15px;">#${c.id_documento}</strong> · <span class="muted">${c.tipo_doc || 'Comprobante'}</span>
-            <span class="muted" style="font-size: 12px; margin-left: 8px;">📅 ${c.fecha}</span>
+            <strong style="font-size: 15px;">#${c.id_documento}</strong> · <span class="muted">${escapeHtml(c.tipo_doc || 'Comprobante')}</span>
+            <span class="muted" style="font-size: 12px; margin-left: 8px;">📅 ${escapeHtml(c.fecha)}</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
             ${pillEstado}

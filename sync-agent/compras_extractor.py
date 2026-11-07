@@ -166,7 +166,7 @@ class ComprasExtractor:
             if id_doc not in compras_map:
                 compras_map[id_doc] = {
                     "id_documento": id_doc,
-                    "dni": cliente_dni,
+                    "dni": dni,
                     "fecha": fecha_iso,
                     "tipo_doc": tipo_comprobante,
                     "total": total,

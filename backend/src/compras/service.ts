@@ -171,9 +171,12 @@ export class ComprasService {
     if (!dni) return [];
 
     const limit = Math.max(1, Math.min(options.limit || 50, 200));
-    const conditions: string[] = ['dni = ?1'];
-    const bindings: (string | number)[] = [dni];
-    let bindIndex = 2;
+
+    // Si es un CUIT de 11 dígitos, busca tanto por CUIT como por DNI embebido usando el índice
+    const dniDerivado = dni.length === 11 ? dni.slice(2, 10) : null;
+    const conditions: string[] = dniDerivado ? ['(dni = ?1 OR dni = ?2)'] : ['dni = ?1'];
+    const bindings: (string | number)[] = dniDerivado ? [dni, dniDerivado] : [dni];
+    let bindIndex = bindings.length + 1;
 
     if (options.estado) {
       conditions.push(`estado = ?${bindIndex++}`);
