@@ -139,6 +139,33 @@ async function apiAdmin(path, { method = 'POST', body } = {}) {
   return res.json();
 }
 
+/**
+ * Llamada fetch autenticada genérica al backend.
+ * Incluye cabecera Authorization: Bearer <token> y manejo de expiración de sesión (401).
+ * Devuelve el objeto Response nativo para permitir chequear .ok o procesar JSON.
+ */
+async function apiFetch(path, options = {}) {
+  const token = getToken();
+  if (!token) {
+    renderAuth();
+    throw new Error('Sesión expirada. Volvé a ingresar.');
+  }
+  const headers = Object.assign(
+    { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    options.headers || {}
+  );
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers,
+  });
+  if (res.status === 401) {
+    clearToken();
+    renderAuth();
+    throw new Error('Sesión expirada. Volvé a ingresar.');
+  }
+  return res;
+}
+
 // ── Lógica de precios (port de esOferta + calcularCostos) ───────────────────
 function esOferta(nombre) {
   const n = String(nombre).trim();
@@ -1691,6 +1718,10 @@ function mostrarConfirmacion({ titulo = '¿Confirmar acción?', mensaje = 'Esta 
     if (typeof dlg.showModal === 'function') dlg.showModal();
     else resolve(confirm(mensaje));
   });
+}
+
+function showConfirm(mensaje, icono = '⚠️', titulo = '¿Confirmar acción?') {
+  return mostrarConfirmacion({ titulo, mensaje, icono, danger: icono === '🗑️' });
 }
 
 // 1. Fábricas
