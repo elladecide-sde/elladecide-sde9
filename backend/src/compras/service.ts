@@ -72,9 +72,13 @@ export class ComprasService {
 
   /**
    * Guarda un lote de compras provenientes del sync-agent.
-   * Por defecto, las compras entran con estado 'DISPONIBLE' y revisión 1 (o incrementan revisión).
+   * Por defecto, las compras entran con estado 'DISPONIBLE' y revisión 1 (o incrementan revisión solo si cambian datos).
+   * Actualiza el last_synced_at para todos los DNIs revisados (incluso aquellos sin compras nuevas).
    */
-  async guardarComprasBatch(compras: CompraCliente[]): Promise<{ guardadas: number; errores: string[] }> {
+  async guardarComprasBatch(
+    compras: CompraCliente[],
+    dnisRevisados?: (string | number)[]
+  ): Promise<{ guardadas: number; errores: string[] }> {
     const errores: string[] = [];
     const validas: CompraCliente[] = [];
 
@@ -88,10 +92,6 @@ export class ComprasService {
           dni: normalizarDni(c.dni),
         });
       }
-    }
-
-    if (validas.length === 0) {
-      return { guardadas: 0, errores };
     }
 
     const stmts: D1PreparedStatement[] = validas.map(compra => {
@@ -109,7 +109,11 @@ export class ComprasService {
              total = excluded.total,
              items_json = excluded.items_json,
              revision = compras_cliente.revision + 1,
-             updated_at = datetime('now')`
+             updated_at = datetime('now')
+           WHERE compras_cliente.total != excluded.total
+              OR compras_cliente.items_json != excluded.items_json
+              OR compras_cliente.tipo_doc != excluded.tipo_doc
+              OR compras_cliente.dni != excluded.dni`
         )
         .bind(
           compra.id_documento,
@@ -121,9 +125,19 @@ export class ComprasService {
         );
     });
 
-    // Actualizar last_synced_at de los DNIs procesados
-    const dnisSincronizados = Array.from(new Set(validas.map(v => v.dni)));
-    const syncStmts = dnisSincronizados.map(dni =>
+    // Actualizar last_synced_at de todos los DNIs revisados por el sync-agent
+    const dnisSincronizados = new Set<string>();
+    for (const v of validas) {
+      if (v.dni) dnisSincronizados.add(v.dni);
+    }
+    if (Array.isArray(dnisRevisados)) {
+      for (const d of dnisRevisados) {
+        const norm = normalizarDni(d);
+        if (norm) dnisSincronizados.add(norm);
+      }
+    }
+
+    const syncStmts = Array.from(dnisSincronizados).map(dni =>
       this.db
         .prepare(
           `UPDATE clientes_interesados SET last_synced_at = datetime('now') WHERE dni = ?1`
@@ -239,9 +253,10 @@ export class ComprasService {
 
   /**
    * Confirma la lectura/procesamiento de documentos (ACK) cambiando el estado a 'PROCESADO'.
+   * Devuelve la cantidad real de registros actualizados en D1.
    */
   async confirmarProcesados(idsDocumentos: number[]): Promise<{ confirmados: number }> {
-    const idsValidos = idsDocumentos.filter(id => typeof id === 'number' && id > 0);
+    const idsValidos = Array.from(new Set(idsDocumentos.filter(id => typeof id === 'number' && id > 0)));
     if (idsValidos.length === 0) {
       return { confirmados: 0 };
     }
@@ -253,16 +268,20 @@ export class ComprasService {
            SET estado = 'PROCESADO',
                procesado_at = datetime('now'),
                updated_at = datetime('now')
-           WHERE id_documento = ?1`
+           WHERE id_documento = ?1 AND estado != 'PROCESADO'`
         )
         .bind(id)
     );
 
+    let confirmados = 0;
     for (let i = 0; i < stmts.length; i += 100) {
       const chunk = stmts.slice(i, i + 100);
-      await this.db.batch(chunk);
+      const batchResults = await this.db.batch<unknown>(chunk);
+      for (const r of batchResults) {
+        confirmados += r.meta?.changes ?? 0;
+      }
     }
 
-    return { confirmados: idsValidos.length };
+    return { confirmados };
   }
 }

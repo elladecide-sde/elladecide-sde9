@@ -83,7 +83,7 @@ const SYNC_MODES: SyncMode[] = ['predeterminado', 'descripcion-costos'];
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key',
 };
 
 const json = (data: unknown, status = 200) =>
@@ -791,14 +791,14 @@ export default {
 
     if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
 
-    // ── Módulo comprasED (Aislamiento total del catálogo) ───────────────────
-    if (path.startsWith('/api/v1/compras') || path === '/api/v1/comprasED') {
-      const comprasRes = await handleComprasRoutes(request, env, url, CORS);
-      if (comprasRes) return comprasRes;
-    }
-
     let res: Response;
     try {
+      // ── Módulo comprasED (Aislamiento total del catálogo) ───────────────────
+      if (path.startsWith('/api/v1/compras') || path === '/api/v1/comprasED') {
+        const comprasRes = await handleComprasRoutes(request, env, url, CORS);
+        if (comprasRes) return comprasRes;
+      }
+
       if (method === 'GET' && path === '/api/v1/version') {
         res = json(await getMetadata(env.DB));
       } else if (method === 'GET' && path === '/api/v1/sync') {

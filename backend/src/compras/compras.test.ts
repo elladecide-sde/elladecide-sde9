@@ -31,6 +31,16 @@ test('calcularRangoFechas: calcula ventanas 48h, 7d, 1m y personalizada', () => 
   const custom = calcularRangoFechas('personalizada', '2026-08-01T00:00:00.000Z', '2026-08-15T23:59:59.000Z', ref);
   assert.equal(custom.desde, '2026-08-01 00:00:00');
   assert.equal(custom.hasta, '2026-08-15 23:59:59');
+
+  // Infiere rango personalizado cuando se pasan fechas sin rango explícito
+  const inferida = calcularRangoFechas(undefined, '2026-08-01T00:00:00.000Z', '2026-08-15T23:59:59.000Z', ref);
+  assert.equal(inferida.desde, '2026-08-01 00:00:00');
+  assert.equal(inferida.hasta, '2026-08-15 23:59:59');
+
+  // Resistencia a strings inválidos (no debe lanzar RangeError: Invalid time value)
+  const invalida = calcularRangoFechas('personalizada', 'saraza', 'otra-saraza', ref);
+  assert.equal(invalida.hasta, '2026-10-30 12:00:00');
+  assert.equal(invalida.desde, '2026-10-28 12:00:00');
 });
 
 test('validarCompra: rechaza compras incompletas o sin items', () => {

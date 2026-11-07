@@ -246,7 +246,10 @@ export async function handleComprasRoutes(
     }
 
     try {
-      const body = (await request.json()) as { compras?: CompraCliente[] };
+      const body = (await request.json()) as {
+        compras?: CompraCliente[];
+        dnis_sincronizados?: (string | number)[];
+      };
       if (!body || !Array.isArray(body.compras)) {
         return Response.json(
           { error: "Body JSON debe contener un array 'compras'" },
@@ -254,7 +257,7 @@ export async function handleComprasRoutes(
         );
       }
 
-      const res = await service.guardarComprasBatch(body.compras);
+      const res = await service.guardarComprasBatch(body.compras, body.dnis_sincronizados);
       return Response.json(
         {
           ok: true,

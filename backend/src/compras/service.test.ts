@@ -31,7 +31,7 @@ class MockD1Database {
 
   async batch(statements: unknown[]) {
     this.batchCalls.push(statements);
-    return statements.map(() => ({ results: [], success: true }));
+    return statements.map(() => ({ results: [], success: true, meta: { changes: 1 } }));
   }
 }
 
@@ -89,6 +89,18 @@ test('ComprasService: guardarComprasBatch separa válidas e inicializa estado DI
   assert.equal(res.guardadas, 1);
   assert.equal(res.errores.length, 1);
   assert.equal(mockDb.batchCalls.length, 1);
+});
+
+test('ComprasService: guardarComprasBatch actualiza last_synced_at para clientes sin compras nuevas', async () => {
+  const mockDb = new MockD1Database();
+  const service = new ComprasService(mockDb as unknown as D1Database);
+
+  // Cliente sin compras nuevas en la ventana
+  const res = await service.guardarComprasBatch([], ['40123456']);
+  assert.equal(res.guardadas, 0);
+  assert.equal(res.errores.length, 0);
+  assert.equal(mockDb.batchCalls.length, 1);
+  assert.equal(mockDb.batchCalls[0].length, 1); // 1 statement para actualizar last_synced_at
 });
 
 test('ComprasService: confirmarProcesados cambia estado a PROCESADO con timestamp', async () => {

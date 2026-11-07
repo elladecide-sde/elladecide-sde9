@@ -59,6 +59,7 @@ export function normalizarDni(raw: string | number | null | undefined): string {
 
 /**
  * Calcula fechas ISO límites para un rango especificado.
+ * Sanitiza fechas inválidas para evitar RangeError y auto-detecta rangos personalizados.
  */
 export function calcularRangoFechas(
   rango: RangoFecha = '48h',
@@ -66,11 +67,26 @@ export function calcularRangoFechas(
   hastaCustom?: string | null,
   referencia: Date = new Date()
 ): { desde: string; hasta: string } {
-  const hastaDate = hastaCustom ? new Date(hastaCustom) : referencia;
-  let desdeDate: Date;
+  let hastaDate: Date;
+  if (hastaCustom) {
+    const parsed = new Date(hastaCustom);
+    hastaDate = isNaN(parsed.getTime()) ? referencia : parsed;
+  } else {
+    hastaDate = referencia;
+  }
 
-  if (rango === 'personalizada' && desdeCustom) {
-    desdeDate = new Date(desdeCustom);
+  // Si mandan desdeCustom o hastaCustom, inferir rango personalizado
+  const esPersonalizada = rango === 'personalizada' || Boolean(desdeCustom || hastaCustom);
+
+  let desdeDate: Date;
+  if (esPersonalizada && desdeCustom) {
+    const parsedDesde = new Date(desdeCustom);
+    if (!isNaN(parsedDesde.getTime())) {
+      desdeDate = parsedDesde;
+    } else {
+      // Fallback seguro a 48hs si mandaron string inválido
+      desdeDate = new Date(hastaDate.getTime() - 48 * 60 * 60 * 1000);
+    }
   } else if (rango === '7d') {
     desdeDate = new Date(hastaDate.getTime() - 7 * 24 * 60 * 60 * 1000);
   } else if (rango === '1m') {
@@ -78,6 +94,13 @@ export function calcularRangoFechas(
   } else {
     // Default 48hs
     desdeDate = new Date(hastaDate.getTime() - 48 * 60 * 60 * 1000);
+  }
+
+  // Invertir si desde es posterior a hasta
+  if (desdeDate.getTime() > hastaDate.getTime()) {
+    const temp = desdeDate;
+    desdeDate = hastaDate;
+    hastaDate = temp;
   }
 
   return {
