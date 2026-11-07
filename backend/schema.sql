@@ -187,23 +187,37 @@ CREATE TABLE IF NOT EXISTS clientes_interesados (
   fecha_desde    TEXT,
   fecha_hasta    TEXT,
   requested_at   TEXT NOT NULL DEFAULT (datetime('now')),
-  last_synced_at TEXT
+  last_synced_at TEXT,
+  existe_en_mdb  INTEGER,
+  nombre_cliente TEXT
 );
 
 -- ── compras_cliente: Historial de compras asociadas al DNI del cliente ──────
 CREATE TABLE IF NOT EXISTS compras_cliente (
-  id_documento   INTEGER PRIMARY KEY,
-  dni            TEXT NOT NULL,
-  fecha          TEXT NOT NULL,
-  tipo_doc       TEXT NOT NULL DEFAULT '',
-  total          REAL NOT NULL DEFAULT 0,
-  items_json     TEXT NOT NULL DEFAULT '[]',
-  estado         TEXT NOT NULL DEFAULT 'DISPONIBLE',
-  revision       INTEGER NOT NULL DEFAULT 1,
-  procesado_at   TEXT,
-  updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+  id_documento       INTEGER PRIMARY KEY,
+  dni                TEXT NOT NULL,
+  fecha              TEXT NOT NULL,
+  tipo_doc           TEXT NOT NULL DEFAULT '',
+  numero_comprobante TEXT NOT NULL DEFAULT '',
+  cliente_nombre     TEXT NOT NULL DEFAULT '',
+  localidad          TEXT NOT NULL DEFAULT '',
+  sucursal           TEXT NOT NULL DEFAULT '',
+  moneda             TEXT NOT NULL DEFAULT 'ARS',
+  descuento          REAL NOT NULL DEFAULT 0,
+  porc_descuento     REAL NOT NULL DEFAULT 0,
+  forma_pago         TEXT NOT NULL DEFAULT '',
+  anulado            INTEGER NOT NULL DEFAULT 0,
+  nota_credito_de    INTEGER,
+  total              REAL NOT NULL DEFAULT 0,
+  items_json         TEXT NOT NULL DEFAULT '[]',
+  estado             TEXT NOT NULL DEFAULT 'DISPONIBLE',
+  revision           INTEGER NOT NULL DEFAULT 1,
+  procesado_at       TEXT,
+  procesado_por      TEXT,
+  updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_compras_dni ON compras_cliente(dni);
 CREATE INDEX IF NOT EXISTS idx_compras_estado ON compras_cliente(estado);
 CREATE INDEX IF NOT EXISTS idx_compras_dni_estado ON compras_cliente(dni, estado);
+CREATE INDEX IF NOT EXISTS idx_compras_updated ON compras_cliente(updated_at);
 

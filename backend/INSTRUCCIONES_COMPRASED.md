@@ -1,122 +1,126 @@
-# Guía de Integración: API comprasED & Targeted Sync
+# Guía de Integración: API comprasED v2 & Targeted Sync
 
-Documentación técnica para agentes y desarrolladores de **Ella** para interactuar con el módulo de compras y sincronización bajo demanda.
-
----
-
-## 1. Conceptos Clave y Filosofía
-
-1. **Sincronización Bajo Demanda (Targeted Sync):** El backend no expone masivamente comprobantes de toda la empresa. Solo sincroniza las compras de los clientes cuyos DNIs hayan sido registrados como interesados.
-2. **Máquina de Estados y ACK (Anti-duplicados):**
-   * Cuando se sincronizan compras nuevas, quedan en estado `DISPONIBLE`.
-   * Al ser leídas y guardadas en la app/Firebase de Ella, se envía un `ACK` que las pasa a estado `PROCESADO`.
-   * En consultas posteriores con `estado=DISPONIBLE`, no se repiten comprobantes ya procesados.
-3. **Autenticación:** Todas las llamadas de Ella requieren el header HTTP:
-   ```http
-   x-api-key: <COMPRAS_API_KEY>
-   ```
-
-**URL Base de Producción:**  
-`https://lola-backend.elladecide.workers.dev`
+Documentación técnica para agentes y desarrolladores de **Ella** para interactuar con el módulo de compras (`comprasED` v2), autenticación por usuario vía Firebase ID Token + Firestore REST, resúmenes con ETag (`304 Not Modified`), paginación y sincronización bajo demanda.
 
 ---
 
-## 2. Flujo de Integración Paso a Paso
+## 1. Modelo de Autenticación
 
-```mermaid
-sequenceDiagram
-    participant Ella as Agente / App de Ella
-    participant API as LOLA Backend
-    participant Agent as Sync-Agent (PC AdmGlobal)
+El Worker de LOLA soporta dos modos de autenticación diferenciados por rol:
 
-    Note over Ella,API: 1. Registrar a qué clientes consultar
-    Ella->>API: POST /api/v1/compras/interesados (con lista de DNIs y rango)
-    
-    Note over API,Agent: 2. En el próximo ciclo automático...
-    Agent->>API: Sync-Agent extrae MDB y sube comprobantes como DISPONIBLE
-    
-    Note over Ella,API: 3. Consultar compras nuevas
-    Ella->>API: GET /api/v1/comprasED?dni=...&estado=DISPONIBLE
-    API-->>Ella: Retorna listado de compras y artículos
-    
-    Note over Ella,API: 4. Confirmar recepción (ACK)
-    Ella->>API: POST /api/v1/compras/ack {"ids_documentos": [189130]}
-    API-->>Ella: {"ok": true, "confirmados": 1}
+### A. Autenticación por Usuario (App de Ella — Recomendado en Clientes)
+```http
+Authorization: Bearer <Firebase_ID_Token>
 ```
+1. El Worker verifica la firma criptográfica `RS256` del token contra las claves públicas JWK de Google (`securetoken@system.gserviceaccount.com`) y valida `aud` e `iss` contra `FIREBASE_PROJECT_ID`.
+2. Con el mismo token del usuario, el Worker lee `users/{uid}.dni` directamente en **Firestore REST API** (o el custom claim `dni` si viniera en el token) y lo cachea por 5 minutos.
+3. **Aislamiento estricto por DNI:** El usuario solo puede consultar, resumir, registrar o confirmar (`ack`) compras de **su propio DNI** (no necesita siquiera mandar `?dni=` en la URL). Si intenta pasar otro `?dni=` distinto al suyo, recibe `403 Forbidden` (`code: "FORBIDDEN_DNI"`).
+
+### B. Autenticación Administrativa (Panel / Backend-to-Backend)
+```http
+x-api-key: <COMPRAS_API_KEY>
+```
+*(O `Authorization: Bearer <LOLA_Admin_JWT>`)*
+Reservada **exclusivamente para uso administrativo o servidor a servidor**. Permite consultar cualquier DNI, hacer consultas en lote (`POST /api/v1/compras/consulta`), listar todos los interesados y resetear estados.
 
 ---
 
-## 3. Especificación de Endpoints
+## 2. Especificación de Endpoints
 
-### A. Registrar Clientes Interesados
-Informa qué DNIs deben ser sincronizados y con qué ventana temporal.
+### 1) Resumen Liviano (`GET /api/v1/compras/resumen`)
+Ideal para polling liviano o comprobación previa antes de descargar el detalle.
 
-* **Endpoint:** `POST /api/v1/compras/interesados`
-* **Headers:**
-  * `Content-Type: application/json`
-  * `x-api-key: <COMPRAS_API_KEY>`
-* **Body:**
-  ```json
-  {
-    "dnis": ["32685684", "39675372"],
-    "rango": "48h"
-  }
-  ```
-  * `rango` (opcional): `"48h"` (default), `"7d"`, `"1m"`, o `"personalizada"`.
-  * Si es `"personalizada"`, podés agregar `"desde": "2026-10-01"`, `"hasta": "2026-10-31"`.
-* **Respuesta (200 OK):**
+* **Endpoint:** `GET /api/v1/compras/resumen` (o `?dni=32685684` en modo admin)
+* **Headers soportados:**
+  * `Authorization: Bearer <Firebase_ID_Token>` (o `x-api-key` admin)
+  * `If-None-Match: W/"<hash>"` (opcional, para recibir `304 Not Modified` sin cuerpo si nada cambió)
+* **Cache-Control:** `private, max-age=60`
+* **Respuesta (`200 OK`):**
   ```json
   {
     "ok": true,
-    "procesados": 2,
-    "rango_configurado": "48h"
+    "dni": "32685684",
+    "estado_sync": "CON_COMPRAS",
+    "existe_en_mdb": true,
+    "cliente_nombre": "ERIKA MARIEL IBARRA RUIZ",
+    "last_synced_at": "2026-11-07 13:20:00",
+    "pendientes": 2,
+    "procesados": 10,
+    "anulados": 0,
+    "total_comprobantes": 12,
+    "ultimo_id_documento": 189130,
+    "updated_at": "2026-11-07 13:20:00",
+    "hash": "8a4f2c901e7b3d12a091bcdef1234567"
   }
   ```
+  * Valores posibles de `estado_sync`:
+    * `"PENDIENTE_SYNC"`: Registrado, esperando el próximo ciclo del agente local.
+    * `"CLIENTE_NO_ENCONTRADO"`: El agente ya sincronizó y verificó que el DNI no figura en `AdmGlobal.MDB`.
+    * `"SIN_COMPRAS"`: El cliente existe en `AdmGlobal.MDB`, ya fue sincronizado, pero no registra compras en el rango.
+    * `"CON_COMPRAS"`: Tiene comprobantes sincronizados.
 
 ---
 
-### B. Consultar Compras de un Cliente (`comprasED`)
-Recupera el historial de compras y los artículos comprados por el cliente.
+### 2) Detalle de Compras (`GET /api/v1/comprasED`)
+Recupera los comprobantes enriquecidos con paginación por cursor y filtro incremental `?since=`.
 
-* **Endpoint:** `GET /api/v1/comprasED?dni={DNI}&estado={ESTADO}&rango={RANGO}&limit={LIMIT}`
-* **Headers:**
-  * `x-api-key: <COMPRAS_API_KEY>`
+* **Endpoint:** `GET /api/v1/comprasED`
 * **Query Params:**
-  * `dni` (requerido): DNI o CUIT del cliente (limpia espacios, puntos y guiones automáticamente).
-  * `estado` (opcional): `"DISPONIBLE"` (recomendado para traer solo compras no leídas) o `"PROCESADO"`. Si se omite, trae todos.
-  * `rango` (opcional): `"48h"`, `"7d"`, `"1m"`, `"personalizada"`.
-  * `desde` / `hasta` (opcional): Filtro por fecha ISO si `rango=personalizada`.
+  * `dni` (opcional con Firebase Token; requerido con `x-api-key`). Soporta también múltiples DNIs separados por coma en modo admin (`?dnis=32685684,39675372`).
+  * `estado` (opcional): `"DISPONIBLE"`, `"PROCESADO"` o `"ANULADO"`.
+  * `since` (opcional): Timestamp ISO UTC (`updated_at >= since`) para traer solo novedades.
   * `limit` (opcional, default `50`, máx `200`).
-* **Respuesta (200 OK):**
+  * `cursor` (opcional): `id_documento` devuelto en `nextCursor` para pedir la página siguiente.
+  * `rango` / `desde` / `hasta` (opcional): Filtro por fecha de emisión del comprobante.
+* **Cache-Control:** `no-store`
+* **Respuesta (`200 OK`):**
   ```json
   {
+    "ok": true,
     "dni": "32685684",
+    "estado_sync": "CON_COMPRAS",
+    "existe_en_mdb": true,
+    "cliente_nombre": "ERIKA MARIEL IBARRA RUIZ",
+    "last_synced_at": "2026-11-07 13:20:00",
     "total_compras": 1,
+    "pendientes": 1,
     "estado_filtrado": "DISPONIBLE",
-    "rango_filtrado": "48h",
+    "rango_filtrado": "SIN_FILTRO",
+    "hasMore": false,
+    "nextCursor": null,
+    "serverTime": "2026-11-07 16:30:00",
     "compras": [
       {
         "id_documento": 189130,
         "dni": "32685684",
         "fecha": "2026-09-03T20:22:02",
         "tipo_doc": "Ticket B",
+        "numero_comprobante": "0000-00078984",
+        "cliente": "ERIKA MARIEL IBARRA RUIZ",
+        "localidad": "CAPITAL",
+        "sucursal": "Sucursal 1 - Caja 1",
+        "moneda": "ARS",
+        "descuento": 17154.3,
+        "porc_descuento": 15,
+        "forma_pago": "EFECTIVO",
+        "anulado": false,
+        "nota_credito_de": null,
         "total": 97207.8,
         "estado": "DISPONIBLE",
         "revision": 1,
+        "procesado_at": null,
+        "procesado_por": null,
         "items": [
           {
             "codigo_unico": "KAUP160",
+            "fabrica": "KAURY",
+            "codigo": "P160",
             "descripcion": "KAURY P160 PACKS CULOTTE LESS ALGODON",
-            "cantidad": 1.0,
+            "cantidad": 1,
             "precio_unitario": 10891.49,
-            "subtotal": 10891.49
-          },
-          {
-            "codigo_unico": "BOX2000",
-            "descripcion": "BOXER BAKHOU 2000 LISO ALGODON HOMBRE",
-            "cantidad": 1.0,
-            "precio_unitario": 8907.53,
-            "subtotal": 8907.53
+            "subtotal": 10891.49,
+            "iva": 21,
+            "descuento": 1633.72
           }
         ]
       }
@@ -126,74 +130,53 @@ Recupera el historial de compras y los artículos comprados por el cliente.
 
 ---
 
-### C. Confirmar Lectura / Procesamiento (ACK)
-Una vez que el agente/app procesó y guardó los comprobantes, envía sus IDs para marcarlos como `PROCESADO`.
+### 3) Confirmación Idempotente (`POST /api/v1/compras/ack`)
+Marca comprobantes como `PROCESADO`. Es **100% idempotente**: re-enviar un `id_documento` que ya estaba procesado no falla y lo incluye en `confirmados` (además de detallarlo en `ya_procesados`).
 
 * **Endpoint:** `POST /api/v1/compras/ack`
-* **Headers:**
-  * `Content-Type: application/json`
-  * `x-api-key: <COMPRAS_API_KEY>`
 * **Body:**
   ```json
   {
-    "ids_documentos": [189130]
+    "ids_documentos": [189130, 189131, 999999]
   }
   ```
-* **Respuesta (200 OK):**
+* **Respuesta (`200 OK`):**
   ```json
   {
     "ok": true,
-    "confirmados": 1
+    "confirmados": [189130, 189131],
+    "cantidad_confirmados": 2,
+    "ya_procesados": [189131],
+    "no_encontrados": [999999]
   }
   ```
 
 ---
 
-## 4. Ejemplos de Implementación para un Agente / Script
+### 4) Consulta en Lote (`POST /api/v1/compras/consulta`) — Admin
+Permite consultar varios DNIs en una sola petición administrativa.
 
-### cURL
-```bash
-# 1. Registrar interesado
-curl -X POST "https://lola-backend.elladecide.workers.dev/api/v1/compras/interesados" \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: TU_COMPRAS_API_KEY" \
-  -d '{"dnis": ["32685684"], "rango": "48h"}'
+* **Headers:** `x-api-key: <COMPRAS_API_KEY>`
+* **Body:**
+  ```json
+  {
+    "dnis": ["32685684", "39675372"],
+    "estado": "DISPONIBLE",
+    "since": "2026-11-01T00:00:00Z",
+    "limit": 100
+  }
+  ```
 
-# 2. Consultar compras nuevas disponibles
-curl -X GET "https://lola-backend.elladecide.workers.dev/api/v1/comprasED?dni=32685684&estado=DISPONIBLE" \
-  -H "x-api-key: TU_COMPRAS_API_KEY"
+---
 
-# 3. Confirmar procesamiento (ACK)
-curl -X POST "https://lola-backend.elladecide.workers.dev/api/v1/compras/ack" \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: TU_COMPRAS_API_KEY" \
-  -d '{"ids_documentos": [189130]}'
-```
-
-### TypeScript / Fetch
-```typescript
-const BASE_URL = 'https://lola-backend.elladecide.workers.dev';
-const API_KEY = process.env.COMPRAS_API_KEY!;
-
-// Consultar compras pendientes
-async function obtenerComprasNuevas(dni: string) {
-  const res = await fetch(`${BASE_URL}/api/v1/comprasED?dni=${dni}&estado=DISPONIBLE`, {
-    headers: { 'x-api-key': API_KEY },
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return await res.json();
-}
-
-// Confirmar recepción
-async function confirmarCompras(ids: number[]) {
-  const res = await fetch(`${BASE_URL}/api/v1/compras/ack`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': API_KEY,
-    },
-    body: JSON.stringify({ ids_documentos: ids }),
-  });
-  return await res.json();
+### 5) Errores Consistentes y Rate Limiting
+Todas las respuestas de error devuelven un objeto estructurado:
+```json
+{
+  "ok": false,
+  "code": "DNI_INVALIDO | DNI_NO_CONFIGURADO | UNAUTHORIZED | TOKEN_EXPIRED | FORBIDDEN_DNI | BAD_REQUEST | RATE_LIMITED",
+  "message": "Descripción legible del problema",
+  "error": "Descripción legible del problema"
 }
 ```
+Si se supera el límite de peticiones por ventana, el Worker responde `429 Too Many Requests` con el header `Retry-After`.

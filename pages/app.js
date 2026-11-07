@@ -2380,7 +2380,10 @@ function renderInteresados(lista) {
     const tr = document.createElement('tr');
 
     const tdDni = document.createElement('td');
-    tdDni.innerHTML = `<strong>${item.dni}</strong>`;
+    const nombreInfo = item.nombre_cliente
+      ? `<div class="muted" style="font-size:11px;">👤 ${escapeHtml(item.nombre_cliente)}</div>`
+      : '';
+    tdDni.innerHTML = `<strong>${escapeHtml(item.dni)}</strong>${nombreInfo}`;
 
     const tdRango = document.createElement('td');
     let rangoLabel = item.rango || '48h';
@@ -2393,8 +2396,13 @@ function renderInteresados(lista) {
     tdRango.textContent = rangoLabel;
 
     const tdSync = document.createElement('td');
-    if (item.last_synced_at) {
-      tdSync.innerHTML = `<span class="pill ok" style="font-size:11px;">✓ ${item.last_synced_at}</span>`;
+    if (item.estado_sync === 'CLIENTE_NO_ENCONTRADO') {
+      tdSync.innerHTML = `<span class="pill" style="font-size:11px; color:#f87171;">⚠️ No existe en AdmGlobal (${escapeHtml(item.last_synced_at || '')})</span>`;
+    } else if (item.estado_sync === 'SIN_COMPRAS') {
+      tdSync.innerHTML = `<span class="pill ok" style="font-size:11px;">✓ Sync OK · Sin compras (${escapeHtml(item.last_synced_at || '')})</span>`;
+    } else if (item.last_synced_at) {
+      const badgeCount = item.total_compras ? ` · ${item.total_compras} comp. (${item.pendientes || 0} disp.)` : '';
+      tdSync.innerHTML = `<span class="pill ok" style="font-size:11px;">✓ ${escapeHtml(item.last_synced_at)}${badgeCount}</span>`;
     } else {
       tdSync.innerHTML = `<span class="pill" style="font-size:11px; color:#ffb74d;">⏳ Pendiente de sync</span>`;
     }
@@ -2530,34 +2538,53 @@ async function consultarComprasCliente(dni) {
       card.style.border = '1px solid var(--border)';
       card.style.backgroundColor = 'var(--bg-elevated, #1e293b)';
 
-      const esDisp = c.estado === 'DISPONIBLE';
-      const pillEstado = esDisp
-        ? '<span class="pill" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8;">📥 DISPONIBLE (Pendiente de lectura)</span>'
-        : '<span class="pill ok" style="font-size: 11px;">✓ PROCESADO</span>';
+      const esAnulado = c.estado === 'ANULADO' || c.anulado;
+      const esDisp = c.estado === 'DISPONIBLE' && !esAnulado;
+      let pillEstado = '<span class="pill ok" style="font-size: 11px;">✓ PROCESADO</span>';
+      if (esAnulado) {
+        pillEstado = '<span class="pill" style="background: rgba(248, 113, 113, 0.15); color: #f87171;">🚫 ANULADO</span>';
+      } else if (esDisp) {
+        pillEstado = '<span class="pill" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8;">📥 DISPONIBLE</span>';
+      }
 
-      const itemsHtml = (c.items || []).map((it) => `
+      const itemsHtml = (c.items || []).map((it) => {
+        const fabBadge = it.fabrica && it.fabrica !== 'SIN FABRICA'
+          ? `<span class="muted" style="font-size:11px;">[${escapeHtml(it.fabrica)}${it.codigo ? ' · #' + escapeHtml(it.codigo) : ''}]</span> `
+          : '';
+        return `
         <div style="display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; border-bottom: 1px dashed rgba(255,255,255,0.08);">
           <span style="color: var(--text-primary);">
-            <strong style="color: var(--accent);">${escapeHtml(it.codigo_unico || '—')}</strong> · ${escapeHtml(it.descripcion)}
+            <strong style="color: var(--accent);">${escapeHtml(it.codigo_unico || '—')}</strong> ${fabBadge}· ${escapeHtml(it.descripcion)}
           </span>
           <span class="muted">
             ${it.cantidad} x $${Number(it.precio_unitario || 0).toLocaleString('es-AR')} = 
             <strong style="color: var(--text-primary);">$${Number(it.subtotal || 0).toLocaleString('es-AR')}</strong>
           </span>
         </div>
-      `).join('');
+      `;
+      }).join('');
+
+      const nroLegible = c.numero_comprobante ? ` (${escapeHtml(c.numero_comprobante)})` : '';
+      const metaExtra = [
+        c.cliente ? `👤 ${escapeHtml(c.cliente)}` : '',
+        c.localidad ? `📍 ${escapeHtml(c.localidad)}` : '',
+        c.forma_pago ? `💳 ${escapeHtml(c.forma_pago)}` : '',
+        c.descuento > 0 ? `🏷️ Desc: $${Number(c.descuento).toLocaleString('es-AR')} (${c.porc_descuento || 0}%)` : '',
+        c.nota_credito_de ? `↩️ NC de Doc #${c.nota_credito_de}` : '',
+      ].filter(Boolean).join(' · ');
 
       card.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
           <div>
-            <strong style="font-size: 15px;">#${c.id_documento}</strong> · <span class="muted">${escapeHtml(c.tipo_doc || 'Comprobante')}</span>
+            <strong style="font-size: 15px;">#${c.id_documento}${nroLegible}</strong> · <span class="muted">${escapeHtml(c.tipo_doc || 'Comprobante')}</span>
             <span class="muted" style="font-size: 12px; margin-left: 8px;">📅 ${escapeHtml(c.fecha)}</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
             ${pillEstado}
-            <span style="font-size: 15px; font-weight: bold; color: #4ade80;">$${Number(c.total || 0).toLocaleString('es-AR')}</span>
+            <span style="font-size: 15px; font-weight: bold; color: #4ade80;">${escapeHtml(c.moneda || 'ARS')} $${Number(c.total || 0).toLocaleString('es-AR')}</span>
           </div>
         </div>
+        ${metaExtra ? `<div class="muted" style="font-size: 11.5px; margin-bottom: 6px;">${metaExtra}</div>` : ''}
         <div style="margin-top: 8px; background: rgba(0,0,0,0.15); border-radius: 6px; padding: 6px 10px;">
           ${itemsHtml || '<span class="muted" style="font-size:12px;">Sin detalle de artículos</span>'}
         </div>

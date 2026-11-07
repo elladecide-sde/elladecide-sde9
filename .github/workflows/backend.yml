@@ -51,6 +51,26 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler d1 execute lola-db --remote --file=./schema.sql
 
+      - name: Migraciones D1 Compras v2 (idempotentes)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx wrangler d1 execute lola-db --remote --command "ALTER TABLE clientes_interesados ADD COLUMN existe_en_mdb INTEGER" || echo "existe_en_mdb OK"
+          npx wrangler d1 execute lola-db --remote --command "ALTER TABLE clientes_interesados ADD COLUMN nombre_cliente TEXT" || echo "nombre_cliente OK"
+          npx wrangler d1 execute lola-db --remote --command "ALTER TABLE compras_cliente ADD COLUMN numero_comprobante TEXT NOT NULL DEFAULT ''" || echo "numero_comprobante OK"
+          npx wrangler d1 execute lola-db --remote --command "ALTER TABLE compras_cliente ADD COLUMN cliente_nombre TEXT NOT NULL DEFAULT ''" || echo "cliente_nombre OK"
+          npx wrangler d1 execute lola-db --remote --command "ALTER TABLE compras_cliente ADD COLUMN localidad TEXT NOT NULL DEFAULT ''" || echo "localidad OK"
+          npx wrangler d1 execute lola-db --remote --command "ALTER TABLE compras_cliente ADD COLUMN sucursal TEXT NOT NULL DEFAULT ''" || echo "sucursal OK"
+          npx wrangler d1 execute lola-db --remote --command "ALTER TABLE compras_cliente ADD COLUMN moneda TEXT NOT NULL DEFAULT 'ARS'" || echo "moneda OK"
+          npx wrangler d1 execute lola-db --remote --command "ALTER TABLE compras_cliente ADD COLUMN descuento REAL NOT NULL DEFAULT 0" || echo "descuento OK"
+          npx wrangler d1 execute lola-db --remote --command "ALTER TABLE compras_cliente ADD COLUMN porc_descuento REAL NOT NULL DEFAULT 0" || echo "porc_descuento OK"
+          npx wrangler d1 execute lola-db --remote --command "ALTER TABLE compras_cliente ADD COLUMN forma_pago TEXT NOT NULL DEFAULT ''" || echo "forma_pago OK"
+          npx wrangler d1 execute lola-db --remote --command "ALTER TABLE compras_cliente ADD COLUMN anulado INTEGER NOT NULL DEFAULT 0" || echo "anulado OK"
+          npx wrangler d1 execute lola-db --remote --command "ALTER TABLE compras_cliente ADD COLUMN nota_credito_de INTEGER" || echo "nota_credito_de OK"
+          npx wrangler d1 execute lola-db --remote --command "ALTER TABLE compras_cliente ADD COLUMN procesado_por TEXT" || echo "procesado_por OK"
+          npx wrangler d1 execute lola-db --remote --command "CREATE INDEX IF NOT EXISTS idx_compras_updated ON compras_cliente(updated_at)" || echo "idx_compras_updated OK"
+
       - name: Migraciones D1 (idempotentes)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -65,9 +85,15 @@ jobs:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           COMPRAS_API_KEY: ${{ secrets.COMPRAS_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          ELLA_WEBHOOK_URL: ${{ secrets.ELLA_WEBHOOK_URL }}
+          ELLA_WEBHOOK_SECRET: ${{ secrets.ELLA_WEBHOOK_SECRET }}
         run: |
           npx wrangler deploy
           if [ -n "$ADMIN_USER" ]; then echo "$ADMIN_USER" | npx wrangler secret put ADMIN_USER; fi
           if [ -n "$ADMIN_PASSWORD" ]; then echo "$ADMIN_PASSWORD" | npx wrangler secret put ADMIN_PASSWORD; fi
           if [ -n "$JWT_SECRET" ]; then echo "$JWT_SECRET" | npx wrangler secret put JWT_SECRET; fi
           if [ -n "$COMPRAS_API_KEY" ]; then echo "$COMPRAS_API_KEY" | npx wrangler secret put COMPRAS_API_KEY; fi
+          if [ -n "$FIREBASE_PROJECT_ID" ]; then echo "$FIREBASE_PROJECT_ID" | npx wrangler secret put FIREBASE_PROJECT_ID; fi
+          if [ -n "$ELLA_WEBHOOK_URL" ]; then echo "$ELLA_WEBHOOK_URL" | npx wrangler secret put ELLA_WEBHOOK_URL; fi
+          if [ -n "$ELLA_WEBHOOK_SECRET" ]; then echo "$ELLA_WEBHOOK_SECRET" | npx wrangler secret put ELLA_WEBHOOK_SECRET; fi

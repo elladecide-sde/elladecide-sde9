@@ -1,11 +1,14 @@
 # ============================================================================
-# compras_extractor.py — Extractor de compras bajo demanda (Targeted Sync)
+# compras_extractor.py — Extractor de compras bajo demanda (Targeted Sync v2)
 # ============================================================================
 # Consulta los DNIs interesados registrados en el Backend (D1) y extrae de
-# AdmGlobal.mdb ÚNICAMENTE los comprobantes de esos DNIs dentro del rango
-# configurado (48hs, 7 días, 1 mes o personalizado).
-# Autenticado: Utiliza token JWT para hablar con el Backend.
-# Optimizado: Reutiliza una única conexión ODBC para todo el lote.
+# AdmGlobal.mdb los comprobantes enriquecidos de esos DNIs dentro del rango
+# configurado (48hs, 7 días, 1 mes o personalizado):
+#   · Cliente (nombre), localidad, sucursal, número de comprobante legible y moneda
+#   · Descuento, % descuento, forma de pago, IVA por ítem
+#   · Estado anulado y referencia nota_credito_de (idDocAsociado)
+#   · Fábrica y código separados por ítem para matchear 1:1 con el catálogo
+#   · Verificación de existencia del DNI en AdmGlobal (existe_en_mdb)
 # ============================================================================
 
 from __future__ import annotations
@@ -23,11 +26,36 @@ from codigo_unico import abrev, partir
 
 logger = logging.getLogger("sync_agent.compras")
 
+TIPOS_NOTA_CREDITO = {7, 11, 12, 22, 23, 24, 28}
+
 
 def normalizar_dni(raw: Any) -> str:
     if raw is None:
         return ""
     return re.sub(r"\D", "", str(raw)).strip()
+
+
+def _safe_float(val: Any, default: float = 0.0) -> float:
+    if val is None:
+        return default
+    if isinstance(val, (Decimal, float, int)):
+        return float(val)
+    try:
+        return float(str(val).replace(",", "."))
+    except Exception:
+        return default
+
+
+def inferir_forma_pago(pago_efectivo: float, pago_tarjeta: float, cuotas: int = 0) -> str:
+    ef = pago_efectivo > 0
+    tj = pago_tarjeta > 0
+    if ef and tj:
+        return f"MIXTO ({cuotas} cuotas)" if cuotas > 1 else "MIXTO"
+    if tj:
+        return f"TARJETA ({cuotas} cuotas)" if cuotas > 1 else "TARJETA"
+    if ef:
+        return "EFECTIVO"
+    return "CTA_CTE"
 
 
 def parsear_fecha_rango(
@@ -41,14 +69,14 @@ def parsear_fecha_rango(
 
     if hasta_custom:
         try:
-            clean_hasta = hasta_custom.replace("Z", "").replace(" ", "T")
+            clean_hasta = hasta_custom.strip().replace("Z", "").replace(" ", "T")
             hasta = datetime.fromisoformat(clean_hasta)
         except Exception:
             pass
 
-    if rango == "personalizada" and desde_custom:
+    if (rango == "personalizada" or desde_custom) and desde_custom:
         try:
-            clean_desde = desde_custom.replace("Z", "").replace(" ", "T")
+            clean_desde = desde_custom.strip().replace("Z", "").replace(" ", "T")
             desde = datetime.fromisoformat(clean_desde)
         except Exception:
             desde = hasta - timedelta(hours=48)
@@ -81,14 +109,14 @@ class ComprasExtractor:
     def _headers(self) -> Dict[str, str]:
         h = {
             "Content-Type": "application/json; charset=utf-8",
-            "User-Agent": "SyncAgenteLola/1.0",
+            "User-Agent": "SyncAgenteLola/2.0",
         }
         if self.token:
             h["Authorization"] = f"Bearer {self.token}"
         return h
 
     def obtener_interesados(self) -> List[Dict[str, Any]]:
-        """Consulta al backend los clientes interesados registrados por Ella."""
+        """Consulta al backend los clientes interesados registrados por Ella o Admin."""
         url = f"{self.backend_url}/api/v1/compras/interesados"
         try:
             req = urllib.request.Request(url, headers=self._headers())
@@ -110,14 +138,46 @@ class ComprasExtractor:
             logger.warning(f"No se pudieron obtener interesados del backend: {e}")
             return []
 
+    def _cargar_mapa_fabricantes(self, cur: Any) -> Dict[int, str]:
+        mapa: Dict[int, str] = {}
+        try:
+            cur.execute("SELECT idFabricante, Nombre FROM Fabricantes")
+            for row in cur.fetchall():
+                if row[0] is not None and row[1]:
+                    mapa[int(row[0])] = str(row[1]).strip()
+        except Exception:
+            pass
+        return mapa
+
+    def _verificar_cliente_en_mdb(self, cur: Any, dni: str) -> Tuple[bool, str]:
+        """Verifica si el DNI/CUIT existe en la tabla Clientes de AdmGlobal.MDB."""
+        try:
+            sql = """
+                SELECT TOP 1 Nom1, Nom2, Localidad
+                FROM Clientes
+                WHERE NroDoc = ? OR CUIT = ?
+            """
+            cur.execute(sql, (dni, dni))
+            row = cur.fetchone()
+            if row:
+                nom1 = str(row[0] or "").strip()
+                nom2 = str(row[1] or "").strip()
+                nombre = f"{nom1} {nom2}".strip()
+                return True, nombre
+        except Exception:
+            pass
+        return False, ""
+
     def _extraer_compras_con_cursor(
         self,
         cur: Any,
         dni: str,
         fecha_desde: datetime,
         fecha_hasta: datetime,
+        fabricantes_map: Optional[Dict[int, str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Extrae compras usando un cursor ODBC ya abierto."""
+        """Extrae compras (incluyendo anuladas y notas de crédito) usando un cursor ODBC abierto."""
+        fab_map = fabricantes_map or {}
         sql = """
             SELECT
                 d.idDocumento,
@@ -129,14 +189,33 @@ class ComprasExtractor:
                 dd.SubTotal,
                 a.Nombre,
                 dc.Nombre AS TipoComprobante,
-                c.CUIT
+                c.CUIT,
+                d.PrefijoDocumento,
+                d.NroDocumento,
+                c.Nom1,
+                c.Nom2,
+                d.NombreClienteEventual,
+                c.Localidad,
+                d.idCaja,
+                d.idEmpresa,
+                d.Descuento,
+                d.PorcDescuento,
+                d.PagoEfectivo,
+                d.PagoTarjeta,
+                d.CuotasTarjeta,
+                d.DocAnulado,
+                d.TipoDocumento,
+                d.idDocAsociado,
+                dd.Iva,
+                a.Iva,
+                a.Codigo,
+                a.idFabricante
             FROM (((Documentos d
             INNER JOIN Clientes c ON d.idCliente = c.idCliente)
             INNER JOIN DocumentosDetalles dd ON d.idDocumento = dd.idDocumento)
             LEFT JOIN Articulos a ON dd.idArticulo = a.idArticulo)
             LEFT JOIN DocumentosConfig dc ON d.TipoDocumento = dc.idDoc
-            WHERE d.DocAnulado = 0
-              AND (c.NroDoc = ? OR c.CUIT = ?)
+            WHERE (c.NroDoc = ? OR c.CUIT = ?)
               AND d.FechaDocumento >= ?
               AND d.FechaDocumento <= ?
             ORDER BY d.FechaDocumento DESC, d.idDocumento DESC
@@ -149,19 +228,67 @@ class ComprasExtractor:
             id_doc = int(r[0])
             fecha_doc = r[1]
             fecha_iso = fecha_doc.isoformat() if isinstance(fecha_doc, datetime) else str(fecha_doc)
-            total = float(r[2]) if isinstance(r[2], (Decimal, float, int)) else 0.0
-            cliente_dni = normalizar_dni(r[3]) or normalizar_dni(r[9]) or dni
-            cantidad = float(r[4]) if r[4] is not None else 1.0
-            precio_u = float(r[5]) if isinstance(r[5], (Decimal, float, int)) else 0.0
-            subtotal = float(r[6]) if isinstance(r[6], (Decimal, float, int)) else (cantidad * precio_u)
-            nombre_art = (r[7] or "").strip()
-            tipo_comprobante = (r[8] or "").strip()
+            total = _safe_float(r[2])
+            cantidad = _safe_float(r[4], 1.0)
+            precio_u = _safe_float(r[5], 0.0)
+            subtotal = _safe_float(r[6], cantidad * precio_u)
+            nombre_art = str(r[7] or "").strip()
+            tipo_comprobante = str(r[8] or "").strip()
+
+            prefijo_doc = str(r[10] or "").strip() if len(r) > 10 else ""
+            nro_doc_comp = str(r[11] or "").strip() if len(r) > 11 else ""
+            numero_comprobante = (
+                f"{prefijo_doc}-{nro_doc_comp}"
+                if prefijo_doc and nro_doc_comp
+                else (nro_doc_comp or str(id_doc))
+            )
+
+            nom1 = str(r[12] or "").strip() if len(r) > 12 else ""
+            nom2 = str(r[13] or "").strip() if len(r) > 13 else ""
+            nom_eventual = str(r[14] or "").strip() if len(r) > 14 else ""
+            cliente_nombre = f"{nom1} {nom2}".strip() or nom_eventual
+
+            localidad = str(r[15] or "").strip() if len(r) > 15 else ""
+            id_caja = int(r[16]) if len(r) > 16 and r[16] is not None else 1
+            id_empresa = int(r[17]) if len(r) > 17 and r[17] is not None else 1
+            sucursal = f"Sucursal {id_empresa} - Caja {id_caja}"
+
+            descuento_doc = _safe_float(r[18] if len(r) > 18 else 0.0)
+            porc_descuento = _safe_float(r[19] if len(r) > 19 else 0.0)
+
+            pago_ef = _safe_float(r[20] if len(r) > 20 else 0.0)
+            pago_tj = _safe_float(r[21] if len(r) > 21 else 0.0)
+            cuotas_tj = int(r[22]) if len(r) > 22 and r[22] is not None else 0
+            forma_pago = inferir_forma_pago(pago_ef, pago_tj, cuotas_tj)
+
+            doc_anulado = bool(r[23]) if len(r) > 23 and r[23] is not None else False
+            tipo_doc_id = int(r[24]) if len(r) > 24 and r[24] is not None else 0
+            id_doc_asociado = int(r[25]) if len(r) > 25 and r[25] is not None else 0
+            nota_credito_de: Optional[int] = None
+            if id_doc_asociado > 0:
+                nota_credito_de = id_doc_asociado
+            elif tipo_doc_id in TIPOS_NOTA_CREDITO:
+                nota_credito_de = 0
+
+            iva_item = _safe_float(
+                r[26] if len(r) > 26 and r[26] is not None else (r[27] if len(r) > 27 else 21.0),
+                21.0,
+            )
+            cod_articulo_mdb = str(r[28] or "").strip() if len(r) > 28 else ""
+            id_fab = int(r[29]) if len(r) > 29 and r[29] is not None else 0
 
             codigo_unico = ""
+            fabrica_item = fab_map.get(id_fab, "")
+            codigo_item = cod_articulo_mdb
+
             if nombre_art:
                 marca_toks, modelo, _ = partir(nombre_art)
                 abrev_marca = abrev(marca_toks, 3)
                 codigo_unico = f"{abrev_marca}{modelo}".strip()
+                if not fabrica_item and marca_toks:
+                    fabrica_item = " ".join(marca_toks).upper()
+                if not codigo_item and modelo:
+                    codigo_item = modelo
 
             if id_doc not in compras_map:
                 compras_map[id_doc] = {
@@ -169,16 +296,30 @@ class ComprasExtractor:
                     "dni": dni,
                     "fecha": fecha_iso,
                     "tipo_doc": tipo_comprobante,
+                    "numero_comprobante": numero_comprobante,
+                    "cliente": cliente_nombre,
+                    "localidad": localidad,
+                    "sucursal": sucursal,
+                    "moneda": "ARS",
+                    "descuento": descuento_doc,
+                    "porc_descuento": porc_descuento,
+                    "forma_pago": forma_pago,
+                    "anulado": doc_anulado,
+                    "nota_credito_de": nota_credito_de,
                     "total": total,
                     "items": [],
                 }
 
             compras_map[id_doc]["items"].append({
                 "codigo_unico": codigo_unico,
+                "fabrica": fabrica_item or "SIN FABRICA",
+                "codigo": codigo_item,
                 "descripcion": nombre_art,
                 "cantidad": cantidad,
                 "precio_unitario": precio_u,
                 "subtotal": subtotal,
+                "iva": iva_item,
+                "descuento": round(subtotal * (porc_descuento / 100.0), 2) if porc_descuento > 0 else 0.0,
             })
 
         return list(compras_map.values())
@@ -189,7 +330,7 @@ class ComprasExtractor:
         fecha_desde: datetime,
         fecha_hasta: datetime,
     ) -> List[Dict[str, Any]]:
-        """Extrae compras no anuladas de un DNI abriendo conexión puntual."""
+        """Extrae compras de un DNI abriendo conexión puntual."""
         if not dni:
             return []
 
@@ -206,7 +347,8 @@ class ComprasExtractor:
         conn = pyodbc.connect(conn_str)
         try:
             cur = conn.cursor()
-            return self._extraer_compras_con_cursor(cur, dni, fecha_desde, fecha_hasta)
+            fab_map = self._cargar_mapa_fabricantes(cur)
+            return self._extraer_compras_con_cursor(cur, dni, fecha_desde, fecha_hasta, fab_map)
         finally:
             conn.close()
 
@@ -214,13 +356,18 @@ class ComprasExtractor:
         self,
         compras: List[Dict[str, Any]],
         dnis_sincronizados: Optional[List[str]] = None,
+        clientes_meta: Optional[List[Dict[str, Any]]] = None,
     ) -> bool:
-        """Envía el lote de compras al backend D1 usando urllib con Bearer JWT."""
+        """Envía el lote de compras y metadata de clientes al backend D1 usando urllib con Bearer JWT."""
         url = f"{self.backend_url}/api/v1/compras/batch"
         try:
             if not compras:
-                if dnis_sincronizados:
-                    payload = json.dumps({"compras": [], "dnis_sincronizados": dnis_sincronizados}).encode("utf-8")
+                if dnis_sincronizados or clientes_meta:
+                    payload = json.dumps({
+                        "compras": [],
+                        "dnis_sincronizados": dnis_sincronizados or [],
+                        "clientes_meta": clientes_meta or [],
+                    }).encode("utf-8")
                     req = urllib.request.Request(
                         url,
                         data=payload,
@@ -228,15 +375,20 @@ class ComprasExtractor:
                         method="POST",
                     )
                     with urllib.request.urlopen(req, timeout=self.timeout_sec) as resp:
-                        logger.info(f"Actualizada última sincronización para {len(dnis_sincronizados)} clientes.")
+                        logger.info(
+                            f"Actualizada última sincronización para {len(dnis_sincronizados or [])} clientes."
+                        )
                 return True
 
             chunk_size = 50
             for i in range(0, len(compras), chunk_size):
                 chunk = compras[i : i + chunk_size]
                 body_data: Dict[str, Any] = {"compras": chunk}
-                if i == 0 and dnis_sincronizados:
-                    body_data["dnis_sincronizados"] = dnis_sincronizados
+                if i == 0:
+                    if dnis_sincronizados:
+                        body_data["dnis_sincronizados"] = dnis_sincronizados
+                    if clientes_meta:
+                        body_data["clientes_meta"] = clientes_meta
 
                 payload = json.dumps(body_data).encode("utf-8")
                 req = urllib.request.Request(
@@ -263,6 +415,7 @@ class ComprasExtractor:
         logger.info(f"Sincronizando compras para {len(interesados)} clientes interesados...")
         todas_las_compras: List[Dict[str, Any]] = []
         dnis_revisados = [item["dni"] for item in interesados if item.get("dni")]
+        clientes_meta: List[Dict[str, Any]] = []
 
         import pyodbc
 
@@ -277,21 +430,37 @@ class ComprasExtractor:
         conn = pyodbc.connect(conn_str)
         try:
             cur = conn.cursor()
+            fab_map = self._cargar_mapa_fabricantes(cur)
             for item in interesados:
                 dni = item["dni"]
                 rango = item.get("rango", "48h")
+                existe, nombre_cli = self._verificar_cliente_en_mdb(cur, dni)
                 desde, hasta = parsear_fecha_rango(
                     rango=rango,
                     desde_custom=item.get("fecha_desde"),
                     hasta_custom=item.get("fecha_hasta"),
                 )
-                compras_cli = self._extraer_compras_con_cursor(cur, dni, desde, hasta)
-                logger.info(f"DNI {dni} (rango {rango}): {len(compras_cli)} compras encontradas.")
+                compras_cli = self._extraer_compras_con_cursor(cur, dni, desde, hasta, fab_map)
+                if compras_cli and not existe:
+                    existe = True
+                    nombre_cli = compras_cli[0].get("cliente", "")
+                clientes_meta.append({
+                    "dni": dni,
+                    "existe_en_mdb": existe,
+                    "nombre_cliente": nombre_cli,
+                })
+                logger.info(
+                    f"DNI {dni} (rango {rango}, existe={existe}): {len(compras_cli)} compras encontradas."
+                )
                 todas_las_compras.extend(compras_cli)
         finally:
             conn.close()
 
-        # Notifica al backend (tanto si hay compras como si solo se actualiza last_synced_at)
-        self.enviar_batch_al_backend(todas_las_compras, dnis_sincronizados=dnis_revisados)
+        # Notifica al backend (tanto si hay compras como si solo se actualiza last_synced_at / existe_en_mdb)
+        self.enviar_batch_al_backend(
+            todas_las_compras,
+            dnis_sincronizados=dnis_revisados,
+            clientes_meta=clientes_meta,
+        )
 
         return len(todas_las_compras)

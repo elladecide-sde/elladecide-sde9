@@ -61,10 +61,13 @@ import { handleComprasRoutes } from './compras/routes';
 
 export interface Env {
   DB: D1Database;
-  ADMIN_USER?: string;     // usuario de login (wrangler secret put ADMIN_USER)
-  ADMIN_PASSWORD?: string; // contraseña de login (wrangler secret put ADMIN_PASSWORD)
-  JWT_SECRET?: string;     // clave de firma del JWT (wrangler secret put JWT_SECRET)
-  COMPRAS_API_KEY?: string;// clave compartida con la app de Ella (wrangler secret put COMPRAS_API_KEY)
+  ADMIN_USER?: string;          // usuario de login (wrangler secret put ADMIN_USER)
+  ADMIN_PASSWORD?: string;      // contraseña de login (wrangler secret put ADMIN_PASSWORD)
+  JWT_SECRET?: string;          // clave de firma del JWT (wrangler secret put JWT_SECRET)
+  COMPRAS_API_KEY?: string;     // clave administrativa compartida (wrangler secret put COMPRAS_API_KEY)
+  FIREBASE_PROJECT_ID?: string; // ID del proyecto Firebase de Ella para verificar ID Tokens
+  ELLA_WEBHOOK_URL?: string;    // URL opcional para notificar compras nuevas por push
+  ELLA_WEBHOOK_SECRET?: string; // Clave HMAC opcional para firmar el webhook
 }
 
 type Product = Producto;
@@ -83,7 +86,8 @@ const SYNC_MODES: SyncMode[] = ['predeterminado', 'descripcion-costos'];
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, If-None-Match',
+  'Access-Control-Expose-Headers': 'ETag, Retry-After',
 };
 
 const json = (data: unknown, status = 200) =>
