@@ -2075,6 +2075,11 @@ Los clientes (teclado Android LOLA, agente de sincronización de escritorio, pan
     }
     \`\`\`
     El token es un JWT válido por 24 horas.
+- **Clientes de Ella (Módulo comprasED v2):**
+  - Encabezado HTTP: \`Authorization: Bearer <Firebase_ID_Token>\`
+  - Verificación criptográfica RS256 contra claves públicas de Google, resolución automática de \`users/{uid}.dni\` en Firestore REST y aislamiento estricto por DNI.
+- **Acceso Administrativo a comprasED / Sync-Agent:**
+  - Encabezado HTTP: \`x-api-key: <COMPRAS_API_KEY>\` o Bearer JWT admin.
 
 ## 4. Protocolo de Sincronización Recomendado (Offline-First)
 1. **Chequeo de Versión:**
@@ -2184,49 +2189,93 @@ Restaura el catálogo al estado de \`bak\` o \`bak2\` revirtiendo el reemplazo a
 { "backup": "bak" }
 \`\`\`
 
-## 7. Módulo comprasED (Historial de Compras por Cliente & Targeted Sync)
+## 7. Módulo comprasED v2 (Historial de Compras por Cliente & Targeted Sync)
 
-API bajo demanda para consultar las compras de clientes específicos registrados en Ella sin exponer comprobantes masivos ni duplicar lecturas.
+API enterprise bajo demanda para consultar las compras de clientes específicos registrados en Ella sin exponer comprobantes masivos, con soporte para Firebase ID Tokens, resúmenes con ETag (304), paginación por cursor y ACK idempotente.
 
 ### Autenticación Requerida
-Todas las llamadas de Ella requieren el encabezado:
-\`\`\`http
-x-api-key: <COMPRAS_API_KEY>
-\`\`\`
+- **App Móvil / Web de Ella (Clientes finales):**
+  \`\`\`http
+  Authorization: Bearer <Firebase_ID_Token>
+  \`\`\`
+  El Worker valida la firma RS256 contra Google, resuelve \`users/{uid}.dni\` en Firestore REST y restringe las consultas exclusivamente al DNI del usuario (no requiere enviar \`?dni=\`). Si se intenta consultar otro DNI, responde \`403 FORBIDDEN_DNI\`.
+- **Panel / Admin / Backend-to-Backend:**
+  \`\`\`http
+  x-api-key: <COMPRAS_API_KEY>
+  \`\`\`
+  (o Bearer JWT admin de LOLA). Permite consultas sin restricción de DNI, lotes y administración.
 
-### 1. Registrar Clientes a Sincronizar: POST \`/api/v1/compras/interesados\`
-Informa qué DNIs deben ser extraídos desde AdmGlobal:
+### 1. Resumen Liviano con ETag: GET \`/api/v1/compras/resumen\`
+Ideal para polling liviano o comprobación al abrir la app.
+Headers: \`If-None-Match: W/"<hash>"\`
+- Si no hay cambios: responde **\`304 Not Modified\`** (cuerpo vacío, 0 bytes).
+- Si hay cambios o primera vez: responde \`200 OK\` con \`Cache-Control: private, max-age=60\`:
 \`\`\`json
 {
-  "dnis": ["32685684"],
-  "rango": "48h"
+  "ok": true,
+  "dni": "32685684",
+  "estado_sync": "CON_COMPRAS",
+  "existe_en_mdb": true,
+  "cliente_nombre": "ERIKA MARIEL IBARRA RUIZ",
+  "last_synced_at": "2026-11-07 13:20:00",
+  "pendientes": 2,
+  "procesados": 10,
+  "anulados": 0,
+  "total_comprobantes": 12,
+  "ultimo_id_documento": 189130,
+  "updated_at": "2026-11-07 13:20:00",
+  "hash": "8a4f2c901e7b3d12a091bcdef1234567"
 }
 \`\`\`
-- \`rango\` (opcional): \`"48h"\` (predeterminado), \`"7d"\`, \`"1m"\` o \`"personalizada"\` (con \`desde\` y \`hasta\` en formato ISO).
+Valores de \`estado_sync\`: \`"PENDIENTE_SYNC"\`, \`"CLIENTE_NO_ENCONTRADO"\`, \`"SIN_COMPRAS"\`, \`"CON_COMPRAS"\`.
 
-### 2. Consultar Compras: GET \`/api/v1/comprasED\`
-Ejemplo: \`GET /api/v1/comprasED?dni=32685684&estado=DISPONIBLE\`
+### 2. Consultar Compras Enriquecidas: GET \`/api/v1/comprasED\`
+Ejemplo: \`GET /api/v1/comprasED?estado=DISPONIBLE&limit=50\`
+Parámetros opcionales:
+- \`estado\`: \`"DISPONIBLE"\`, \`"PROCESADO"\`, \`"ANULADO"\`
+- \`since\`: Timestamp ISO UTC (\`updated_at >= since\`)
+- \`limit\` y \`cursor\`: Paginación determinística por cursor
+- \`dnis\`: Múltiples DNIs separados por coma (solo modo admin)
 Respuesta:
 \`\`\`json
 {
+  "ok": true,
   "dni": "32685684",
+  "estado_sync": "CON_COMPRAS",
+  "existe_en_mdb": true,
   "total_compras": 1,
-  "estado_filtrado": "DISPONIBLE",
+  "pendientes": 1,
+  "hasMore": false,
+  "nextCursor": null,
   "compras": [
     {
       "id_documento": 189130,
       "dni": "32685684",
       "fecha": "2026-09-03T20:22:02",
       "tipo_doc": "Ticket B",
+      "numero_comprobante": "0001-00078984",
+      "cliente": "ERIKA MARIEL IBARRA RUIZ",
+      "localidad": "CAPITAL",
+      "sucursal": "Sucursal 1 - Caja 1",
+      "moneda": "ARS",
+      "descuento": 17154.3,
+      "porc_descuento": 15,
+      "forma_pago": "EFECTIVO",
+      "anulado": false,
+      "nota_credito_de": null,
       "total": 97207.8,
       "estado": "DISPONIBLE",
       "items": [
         {
           "codigo_unico": "KAUP160",
+          "fabrica": "KAURY",
+          "codigo": "P160",
           "descripcion": "KAURY P160 PACKS CULOTTE LESS ALGODON",
-          "cantidad": 1.0,
+          "cantidad": 1,
           "precio_unitario": 10891.49,
-          "subtotal": 10891.49
+          "subtotal": 10891.49,
+          "iva": 21,
+          "descuento": 1633.72
         }
       ]
     }
@@ -2234,13 +2283,34 @@ Respuesta:
 }
 \`\`\`
 
-### 3. Confirmar Recepción (ACK): POST \`/api/v1/compras/ack\`
-Evita la duplicación en consultas posteriores marcando los documentos como \`PROCESADO\`:
+### 3. Confirmación Idempotente (ACK): POST \`/api/v1/compras/ack\`
+100% idempotente: re-enviar comprobantes ya confirmados no falla.
 \`\`\`json
 {
-  "ids_documentos": [189130]
+  "ids_documentos": [189130, 189131]
 }
 \`\`\`
+Respuesta:
+\`\`\`json
+{
+  "ok": true,
+  "confirmados": [189130, 189131],
+  "cantidad_confirmados": 2,
+  "ya_procesados": [189131],
+  "no_encontrados": []
+}
+\`\`\`
+
+### 4. Registrar Clientes para Sincronizar: POST \`/api/v1/compras/interesados\`
+- Clientes con Firebase Token: \`{ "rango": "48h" }\` (auto-registra su propio DNI).
+- Administradores con x-api-key: \`{ "dnis": ["32685684"], "rango": "48h" }\`.
+Rangos disponibles: \`"48h"\` (default), \`"7d"\`, \`"1m"\` o \`"personalizada"\` (\`desde\` y \`hasta\`).
+
+### 5. Consulta en Lote (Admin): POST \`/api/v1/compras/consulta\`
+Permite consultar comprobantes de múltiples DNIs en una única petición con cuerpo \`{ "dnis": [...], "estado": "DISPONIBLE" }\`.
+
+### 6. Webhook Push Opcional
+Configurando \`ELLA_WEBHOOK_URL\` y \`ELLA_WEBHOOK_SECRET\`, LOLA notifica vía POST firmado con HMAC (\`x-lola-signature\`) cuando ingresan compras nuevas en \`/batch\`.
 
 ## 8. Modelo de Precios y Reglas de Negocio
 - \`precios\`: Array de 4 enteros \`[Lista 1, Lista 2, Lista 3, Lista 4]\`.

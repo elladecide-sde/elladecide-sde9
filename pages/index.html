@@ -644,11 +644,12 @@
 
         <div class="guia-block">
           <div class="guia-block-title">🔑 Autenticación y Permisos</div>
-          <p class="guia-text">El modelo de acceso separa lecturas públicas de operaciones administrativas:</p>
+          <p class="guia-text">El modelo de acceso separa lecturas públicas, acceso de clientes y operaciones administrativas:</p>
           <ul class="guia-list">
-            <li><strong>Lectura pública (sin token):</strong> <code>/api/v1/version</code>, <code>/api/v1/sync</code>, <code>/api/v1/sync/v2</code>, <code>/api/v1/sync-config</code>, <code>/api/v1/parser-config</code>, <code>/api/v1/mapa-catalogo</code>.</li>
-            <li><strong>Escritura / Admin (requiere Bearer Token):</strong> <code>POST /api/v1/admin/products</code>, <code>POST /api/v1/admin/rollback</code>, <code>DELETE /api/v1/admin/products/:codigo</code>, etc.</li>
-            <li><strong>Obtención del token:</strong> Realizá un <code>POST /api/v1/auth/login</code> con JSON <code>{"username": "...", "password": "..."}</code>. La respuesta entrega un JWT con validez de 24 horas.</li>
+            <li><strong>Lectura pública de catálogo (sin token):</strong> <code>/api/v1/version</code>, <code>/api/v1/sync</code>, <code>/api/v1/sync/v2</code>, <code>/api/v1/sync-config</code>, <code>/api/v1/parser-config</code>, <code>/api/v1/mapa-catalogo</code>.</li>
+            <li><strong>Clientes de Ella (comprasED v2):</strong> Envía <code>Authorization: Bearer &lt;Firebase_ID_Token&gt;</code>. El Worker valida la firma contra Google, resuelve automáticamente el DNI vía Firestore REST (<code>users/{uid}.dni</code>) y restringe el acceso estrictamente a sus propios comprobantes.</li>
+            <li><strong>Escritura / Admin / Sync-Agent:</strong> Requiere encabezado <code>x-api-key: &lt;COMPRAS_API_KEY&gt;</code> o <code>Authorization: Bearer &lt;LOLA_Admin_JWT&gt;</code> para operaciones de catálogo (<code>POST /api/v1/admin/products</code>, <code>POST /api/v1/admin/rollback</code>) o administración de compras (<code>POST /api/v1/compras/consulta</code>, <code>POST /api/v1/compras/reset</code>, etc.).</li>
+            <li><strong>Obtención del token administrativo:</strong> Realizá un <code>POST /api/v1/auth/login</code> con JSON <code>{"username": "...", "password": "..."}</code>. La respuesta entrega un JWT con validez de 24 horas.</li>
           </ul>
         </div>
 
@@ -676,7 +677,7 @@
               <tr>
                 <td><code>/api/v1/version</code></td>
                 <td><span class="pill ok" style="font-size:11px">GET · Libre</span></td>
-                <td>Devuelve <code>{ revision, hash, updated_at }</code> para chequeo instantáneo.</td>
+                <td>Devuelve <code>{ revision, hash, updated_at }</code> para chequeo instantáneo del catálogo.</td>
               </tr>
               <tr>
                 <td><code>/api/v1/sync/v2</code></td>
@@ -694,15 +695,45 @@
                 <td>Contrato v1 aditivo e inmutable para clientes clásicos de teclado.</td>
               </tr>
               <tr>
-                <td><code>/api/v1/admin/products</code></td>
-                <td><span class="pill" style="font-size:11px; color:#ffb74d">POST · Bearer</span></td>
+                <td><code>/api/v1/compras/resumen</code></td>
+                <td><span class="pill ok" style="font-size:11px">GET · Firebase / Key</span></td>
                 <td>
-                  Upsert parcial (<code>replace: false</code>) o reemplazo total atómico con rotación de backups (<code>replace: true</code>).
+                  Resumen liviano del cliente. Soporta <code>If-None-Match: W/"&lt;hash&gt;"</code> para responder <code>304 Not Modified</code> (0 bytes).<br>
+                  Devuelve <code>{ pendientes, procesados, estado_sync, existe_en_mdb, hash, updated_at }</code>.
                 </td>
               </tr>
               <tr>
+                <td><code>/api/v1/comprasED</code></td>
+                <td><span class="pill ok" style="font-size:11px">GET · Firebase / Key</span></td>
+                <td>
+                  Comprobantes enriquecidos. Parámetros:<br>
+                  • <code>?estado=DISPONIBLE|PROCESADO|ANULADO</code><br>
+                  • <code>?since=ISO_UTC</code> · <code>?limit=50</code> · <code>?cursor=id_doc</code>
+                </td>
+              </tr>
+              <tr>
+                <td><code>/api/v1/compras/ack</code></td>
+                <td><span class="pill ok" style="font-size:11px">POST · Firebase / Key</span></td>
+                <td>Confirmación 100% idempotente de lectura. Recibe <code>{"ids_documentos": [...]}</code> y devuelve confirmados, ya procesados y no encontrados.</td>
+              </tr>
+              <tr>
+                <td><code>/api/v1/compras/interesados</code></td>
+                <td><span class="pill ok" style="font-size:11px">POST/GET · Firebase / Key</span></td>
+                <td>Registra DNIs en cola de sincronización con rango (<code>"48h"</code>, <code>"7d"</code>, <code>"1m"</code>, <code>"personalizada"</code>) y consulta estado operativo.</td>
+              </tr>
+              <tr>
+                <td><code>/api/v1/compras/consulta</code></td>
+                <td><span class="pill" style="font-size:11px; color:#ffb74d">POST · Key Admin</span></td>
+                <td>Consulta administrativa en lote para múltiples DNIs en una sola llamada.</td>
+              </tr>
+              <tr>
+                <td><code>/api/v1/admin/products</code></td>
+                <td><span class="pill" style="font-size:11px; color:#ffb74d">POST · Bearer Admin</span></td>
+                <td>Upsert parcial (<code>replace: false</code>) o reemplazo total atómico con rotación de backups (<code>replace: true</code>).</td>
+              </tr>
+              <tr>
                 <td><code>/api/v1/admin/rollback</code></td>
-                <td><span class="pill" style="font-size:11px; color:#ffb74d">POST · Bearer</span></td>
+                <td><span class="pill" style="font-size:11px; color:#ffb74d">POST · Bearer Admin</span></td>
                 <td>Restaura inmediatamente el catálogo anterior desde <code>bak</code> o <code>bak2</code>.</td>
               </tr>
             </tbody>
@@ -723,18 +754,28 @@
         </div>
 
         <div class="guia-block">
-          <div class="guia-block-title">🛍️ Módulo comprasED (Historial de Compras y Targeted Sync)</div>
+          <div class="guia-block-title">🛍️ Módulo comprasED v2 (Historial de Compras y Targeted Sync)</div>
           <p class="guia-text">Sincronización bajo demanda y consulta de historial de compras por cliente para la plataforma de Ella:</p>
           <ul class="guia-list">
-            <li><strong>Autenticación:</strong> Requiere el encabezado <code>x-api-key: &lt;COMPRAS_API_KEY&gt;</code> en cada petición.</li>
-            <li><strong>1. Registrar DNIs de Interés (POST <code>/api/v1/compras/interesados</code>):</strong>
-              Envía la lista de clientes a sincronizar: <code>{"dnis": ["32685684"], "rango": "48h"}</code>. Rangos: <code>"48h"</code> (default), <code>"7d"</code>, <code>"1m"</code> o <code>"personalizada"</code> con <code>desde</code> y <code>hasta</code>.
+            <li><strong>Autenticación Dual:</strong>
+              • <strong>App de Ella:</strong> Enviar <code>Authorization: Bearer &lt;Firebase_ID_Token&gt;</code>. El Worker resuelve el DNI vía Firestore REST (<code>users/{uid}.dni</code>) con aislamiento estricto (no hace falta enviar <code>?dni=</code>).<br>
+              • <strong>Panel / Admin:</strong> Enviar <code>x-api-key: &lt;COMPRAS_API_KEY&gt;</code>.
             </li>
-            <li><strong>2. Consultar Compras (GET <code>/api/v1/comprasED?dni=...&amp;estado=DISPONIBLE</code>):</strong>
-              Devuelve los comprobantes y el desglose de artículos (<code>codigo_unico</code>, <code>descripcion</code>, <code>cantidad</code>, <code>precio_unitario</code>, <code>subtotal</code>) no leídos.
+            <li><strong>1. Resumen Liviano con ETag (GET <code>/api/v1/compras/resumen</code>):</strong>
+              Consultar con encabezado <code>If-None-Match: W/"&lt;hash&gt;"</code>. Si nada cambió, responde <code>304 Not Modified</code> sin cuerpo. Informa <code>pendientes</code>, <code>procesados</code>, <code>ultimo_id_documento</code> y <code>estado_sync</code> (<code>PENDIENTE_SYNC</code>, <code>CLIENTE_NO_ENCONTRADO</code>, <code>SIN_COMPRAS</code>, <code>CON_COMPRAS</code>).
             </li>
-            <li><strong>3. Confirmar Procesamiento / ACK (POST <code>/api/v1/compras/ack</code>):</strong>
-              Una vez guardadas en la app/Firebase, envía <code>{"ids_documentos": [189130]}</code> para marcarlas como <code>PROCESADO</code> y que no se repitan en futuras consultas.
+            <li><strong>2. Descarga de Compras (GET <code>/api/v1/comprasED</code>):</strong>
+              Filtro por <code>?estado=DISPONIBLE</code>, <code>?since=ISO_UTC</code> y paginación con <code>?limit=50</code> y <code>?cursor=id_doc</code>.
+              Comprobantes enriquecidos con <code>numero_comprobante</code>, <code>cliente</code>, <code>localidad</code>, <code>sucursal</code>, <code>descuento</code>, <code>forma_pago</code>, <code>anulado</code>, <code>nota_credito_de</code>, y artículos con <code>fabrica</code>, <code>codigo</code>, <code>iva</code> y <code>descuento</code>.
+            </li>
+            <li><strong>3. Confirmación Idempotente / ACK (POST <code>/api/v1/compras/ack</code>):</strong>
+              Envía <code>{"ids_documentos": [189130]}</code> para marcar como <code>PROCESADO</code>. Es 100% idempotente y detalla <code>confirmados</code>, <code>ya_procesados</code> y <code>no_encontrados</code>.
+            </li>
+            <li><strong>4. Registro de Clientes (POST <code>/api/v1/compras/interesados</code>):</strong>
+              Auto-registro desde app con <code>{"rango": "48h"}</code> o registro en lote con <code>{"dnis": ["32685684"], "rango": "48h"}</code>. Rangos: <code>"48h"</code>, <code>"7d"</code>, <code>"1m"</code> o <code>"personalizada"</code> con <code>desde</code> y <code>hasta</code>.
+            </li>
+            <li><strong>5. Webhook Push Opcional:</strong>
+              Configurando <code>ELLA_WEBHOOK_URL</code> y <code>ELLA_WEBHOOK_SECRET</code>, LOLA notifica vía <code>POST</code> con firma HMAC-SHA256 (<code>x-lola-signature</code>) ante compras nuevas.
             </li>
           </ul>
         </div>
